@@ -1,11 +1,11 @@
 // ============================================
 // AI AFFILIATE DISTRIBUTION ENGINE
-// Telegram Bot - Full Featured
+// Telegram Bot - Phase 2 Enhanced
 // ============================================
 
 import { Telegraf, Markup, Context } from 'telegraf';
 import { PrismaClient } from '@prisma/client';
-import { generateContentPack } from '../lib/openai-content';
+import { generatePhase2Content } from '../lib/openai-content';
 import 'dotenv/config';
 
 // ============================================
@@ -32,12 +32,8 @@ function formatPrice(price: number): string {
 }
 
 function truncate(text: string, len: number): string {
+  if (!text) return '';
   return text.length > len ? text.substring(0, len) + '...' : text;
-}
-
-async function isAdmin(ctx: Context): Promise<boolean> {
-  const chatId = ctx.chat?.id.toString();
-  return chatId === ADMIN_CHAT_ID || chatId === '5985049933';
 }
 
 // ============================================
@@ -49,78 +45,78 @@ bot.command('start', async (ctx) => {
   const welcomeText = `
 🤖 *AI Affiliate Engine Bot*
 
-Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI.
+Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI Phase 2.
 
 📋 *Commands:*
 • /help - Bantuan
 • /products - List produk
 • /add [link] - Tambah produk via link
+• /generate2 [productId] - Generate Phase 2 content
 • /status - Status sistem
 • /stats - Statistik
 • /pending - Konten menunggu approval
-• /approve [id] - Approve konten
-• /reject [id] - Tolak konten
+• /view [id] - Lihat detail konten
 
-💡 *Tips:* Kirim link Shopee/TikTok/Tokopedia/Lazada untuk auto-generate konten!
+💡 *Tips:* Kirim link Shopee/TikTok/Tokopedia/Lazada untuk auto-generate Phase 2!
 `;
-
   await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
 
 // /help - Help message
 bot.command('help', async (ctx) => {
   const helpText = `
-📖 *Panduan Penggunaan*
+📖 *Panduan Penggunaan Phase 2*
 
 *Menambah Produk:*
-1. Kirim command: /add [affiliate_link]
-2. Bot akan auto-scrape & generate konten
-3. Review & approve konten
+1. Kirim: /add [affiliate_link]
+2. Bot auto-generate Phase 2 content
 
-*Platform Supported:*
-✅ Shopee
-✅ TikTok Shop
-✅ Tokopedia
-✅ Lazada
+*Generate Ulang:*
+1. Ketik: /generate2 [productId]
+2. Akan generate 20 hooks, 10 captions, dll
 
-*Shortcut:*
-• Kirim link langsung = auto add
-• Ketik nama produk = search
+*Approval Workflow:*
+1. Ketik /pending
+2. Pilih konten untuk review
+3. Klik ✅ Approve / ❌ Reject
 
-*Status Konten:*
-🟡 PENDING - Menunggu review
-🟢 APPROVED - Sudah approved
-🔴 REJECTED - Ditolak
+*Yang Didapat:*
+✅ 20 Hook variations
+✅ 10 Caption variations
+✅ 5 CTA variations
+✅ 5 Video scripts
+✅ 30 Hashtags
+✅ 4 Video AI prompts
+✅ 4 Image AI prompts
+✅ Quality score per content
 `;
-
   await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
 // /status - System status
 bot.command('status', async (ctx) => {
   try {
-    const [products, links, contents, pending, clicks] = await Promise.all([
+    const [products, content, pending, approved, rejected] = await Promise.all([
       prisma.product.count({ where: { status: 'ACTIVE' } }),
-      prisma.link.count(),
       prisma.content.count(),
       prisma.content.count({ where: { approvalStatus: 'PENDING' } }),
-      prisma.link.aggregate({ _sum: { clicks: true } }),
+      prisma.content.count({ where: { approvalStatus: 'APPROVED' } }),
+      prisma.content.count({ where: { approvalStatus: 'REJECTED' } }),
     ]);
 
     const statusText = `
 📊 *System Status*
 
 🛒 Products: ${products} aktif
-🔗 Links: ${links} total
-📝 Contents: ${contents} total
-⏳ Pending: ${pending} menunggu
-👆 Total Clicks: ${clicks._sum.clicks || 0}
+📝 Total Content: ${content}
+⏳ Pending: ${pending}
+✅ Approved: ${approved}
+❌ Rejected: ${rejected}
 
 🟢 Database: Connected
-🟢 AI: Configured
+🟢 AI Phase 2: Active
 🟢 Bot: Running
 `;
-
     await ctx.reply(statusText, { parse_mode: 'Markdown' });
   } catch (error) {
     await ctx.reply('❌ Error fetching status');
@@ -131,19 +127,21 @@ bot.command('status', async (ctx) => {
 bot.command('stats', async (ctx) => {
   try {
     const topProducts = await prisma.product.findMany({
-      include: { links: { select: { clicks: true } } },
+      include: {
+        links: { select: { clicks: true } },
+        _count: { select: { contents: true } }
+      },
       orderBy: { createdAt: 'desc' },
       take: 5,
     });
 
-    const statsText = `
-📈 *Top Products*
+    let statsText = `📈 *Top Products*\n\n`;
 
-${topProducts.map((p, i) => {
-  const clicks = p.links.reduce((sum, l) => sum + l.clicks, 0);
-  return `${i + 1}. ${p.name}\n   💰 ${formatPrice(p.price)} | 👆 ${clicks} clicks`;
-}).join('\n\n')}
-`;
+    for (let i = 0; i < topProducts.length; i++) {
+      const p = topProducts[i];
+      const clicks = p.links.reduce((sum, l) => sum + l.clicks, 0);
+      statsText += `${i + 1}. ${p.name}\n   💰 ${formatPrice(p.price)} | 👆 ${clicks} clicks | 📝 ${p._count.contents} content\n\n`;
+    }
 
     await ctx.reply(statsText, { parse_mode: 'Markdown' });
   } catch (error) {
@@ -167,26 +165,31 @@ bot.command('products', async (ctx) => {
     }
 
     const buttons = products.map(p => [
-      Markup.button.callback(`${p.name.substring(0, 25)}`, `view_${p.id}`)
+      Markup.button.callback(
+        `📦 ${truncate(p.name, 25)}`,
+        `gen2_${p.id}`
+      )
     ]);
 
-    const listText = `📦 *Daftar Produk (${products.length})*\n\nPilih produk untuk detail:`;
-
-    await ctx.reply(listText, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
-    });
+    await ctx.reply(
+      `📦 *Daftar Produk (${products.length})*\n\nPilih produk untuk generate Phase 2:`,
+      { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }
+    );
   } catch (error) {
     await ctx.reply('❌ Error fetching products');
   }
 });
 
-// /pending - Pending contents
+// /pending - Pending contents with Phase 2 details
 bot.command('pending', async (ctx) => {
   try {
     const pending = await prisma.content.findMany({
       where: { approvalStatus: 'PENDING' },
-      include: { product: { select: { name: true } } },
+      include: {
+        product: { select: { name: true } },
+        qualityScore: true,
+        _count: { select: { contentVariants: true } }
+      },
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
@@ -196,11 +199,23 @@ bot.command('pending', async (ctx) => {
       return;
     }
 
+    let message = `⏳ *Konten Pending (${pending.length})*\n\n`;
+
+    for (const c of pending) {
+      const score = c.qualityScore?.overallScore || 0;
+      const variants = c._count.contentVariants;
+      const emoji = score >= 80 ? '🟢' : score >= 60 ? '🟡' : '🔴';
+
+      message += `${emoji} *${truncate(c.product.name, 20)}*\n`;
+      message += `   📝 ${variants} variants | Score: ${score}/100\n`;
+      message += `   ID: \`${c.id.substring(0, 8)}...\`\n\n`;
+    }
+
     const buttons = pending.map(c => [
-      Markup.button.callback(`📝 ${truncate(c.product.name, 20)}`, `content_${c.id}`)
+      Markup.button.callback(`📝 ${truncate(c.product.name, 20)}`, `view_${c.id}`)
     ]);
 
-    await ctx.reply(`⏳ *Konten Pending (${pending.length})*\n\nPilih untuk review:`, {
+    await ctx.reply(message, {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard(buttons)
     });
@@ -209,7 +224,7 @@ bot.command('pending', async (ctx) => {
   }
 });
 
-// /add [link] - Add product workflow
+// /add [link] - Add product with Phase 2 generation
 bot.command('add', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1).join(' ');
 
@@ -220,13 +235,11 @@ bot.command('add', async (ctx) => {
 
   const link = args.trim();
 
-  // Validate basic URL
   if (!link.startsWith('http')) {
     await ctx.reply('❌ Link tidak valid. Pastikan dimulai dengan http:// atau https://');
     return;
   }
 
-  // Check supported platforms
   const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
   const isSupported = supportedPlatforms.some(p => link.toLowerCase().includes(p));
 
@@ -235,15 +248,15 @@ bot.command('add', async (ctx) => {
     return;
   }
 
-  await ctx.reply('⏳ Processing...');
+  await ctx.reply('⏳ Processing... Generating Phase 2 content...');
 
   try {
-    // Create product
     const slug = `prod_${Date.now()}`;
 
+    // Create product
     const product = await prisma.product.create({
       data: {
-        name: 'New Product ' + new Date().toLocaleTimeString(),
+        name: 'Product ' + new Date().toLocaleTimeString(),
         slug,
         category: 'Uncategorized',
         price: 0,
@@ -265,22 +278,22 @@ bot.command('add', async (ctx) => {
       },
     });
 
-    // Generate AI content
-    const contentPack = await generateContentPack({
-      productName: 'New Product',
+    // Generate Phase 2 content
+    const contentPack = await generatePhase2Content({
+      productName: product.name,
       productPrice: 0,
       productCategory: 'Uncategorized',
     });
 
-    // Save content
+    // Create main content
     const content = await prisma.content.create({
       data: {
         productId: product.id,
-        contentType: 'MIXED_CONTENT',
+        contentType: 'PHASE2_FULL',
         platform: 'ALL',
         hook: contentPack.hooks[0],
         caption: contentPack.captions[0],
-        hashtags: contentPack.hashtags.slice(0, 15).join(' '),
+        hashtags: contentPack.hashtags.slice(0, 30).join(','),
         cta: contentPack.ctas[0],
         telegramText: contentPack.telegramText,
         whatsappText: contentPack.whatsappText,
@@ -291,23 +304,292 @@ bot.command('add', async (ctx) => {
       },
     });
 
-    const successText = `
-✅ *Produk Ditambahkan!*
+    // Create content variants
+    const variantPromises: any[] = [];
 
-📦 *Nama:* ${product.name}
+    contentPack.hooks.forEach((hook, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'HOOK',
+          variantIndex: index + 1,
+          contentValue: hook,
+        },
+      }));
+    });
+
+    contentPack.captions.forEach((caption, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CAPTION',
+          variantIndex: index + 1,
+          contentValue: caption,
+        },
+      }));
+    });
+
+    contentPack.ctas.forEach((cta, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CTA',
+          variantIndex: index + 1,
+          contentValue: cta,
+        },
+      }));
+    });
+
+    await Promise.all(variantPromises);
+
+    // Create quality score
+    await prisma.qualityScore.create({
+      data: {
+        contentId: content.id,
+        hookScore: contentPack.qualityScores.hookScore,
+        clarityScore: contentPack.qualityScores.clarityScore,
+        conversionScore: contentPack.qualityScores.conversionScore,
+        platformFitScore: contentPack.qualityScores.platformFitScore,
+        overallScore: contentPack.qualityScores.overallScore,
+        bestHook: contentPack.qualityScores.bestHook,
+        bestCaption: contentPack.qualityScores.bestCaption,
+        bestCta: contentPack.qualityScores.bestCta,
+        bestPlatform: contentPack.qualityScores.bestPlatform,
+        shouldPost: contentPack.qualityScores.shouldPost,
+        recommendation: contentPack.qualityScores.recommendation,
+      },
+    });
+
+    // Send summary with buttons
+    const summaryText = `
+✅ *Phase 2 Content Generated!*
+
+📦 *Produk:* ${product.name}
 🔗 *Link:* ${link}
 🏪 *Platform:* ${product.affiliatePlatform}
 
-📝 *Konten Generated:*
+📊 *Content Stats:*
+• Hooks: ${contentPack.hooks.length}
+• Captions: ${contentPack.captions.length}
+• CTAs: ${contentPack.ctas.length}
+
+📈 *Quality Score:* ${contentPack.qualityScores.overallScore}/100
+🎯 *Best Platform:* ${contentPack.qualityScores.bestPlatform}
+${contentPack.qualityScores.shouldPost ? '✅' : '⚠️'} *Recommendation:* ${contentPack.qualityScores.shouldPost ? 'Ready to post' : 'Needs review'}
+
+📝 *Hook Preview:*
 ${truncate(contentPack.hooks[0], 100)}
 
-⏳ Status: Menunggu approval
-ID: \`${content.id}\`
-
-Ketik /approve ${content.id} untuk approve
+🆔 Content ID: \`${content.id}\`
 `;
 
-    await ctx.reply(successText, { parse_mode: 'Markdown' });
+    await ctx.reply(summaryText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Approve', callback_data: `appr_${content.id}` },
+            { text: '❌ Reject', callback_data: `rejt_${content.id}` },
+          ],
+          [
+            { text: '📝 View All Variants', callback_data: `view_${content.id}` },
+            { text: '🔄 Regenerate', callback_data: `regen_${content.id}` },
+          ]
+        ]
+      }
+    });
+
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /generate2 [productId] - Generate Phase 2 for existing product
+bot.command('generate2', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    await ctx.reply('📎 Format: /generate2 [product_id]\n\nContoh: /generate2 cmpxxxxxx');
+    return;
+  }
+
+  try {
+    const product = await prisma.product.findUnique({ where: { id: args } });
+    if (!product) {
+      await ctx.reply('❌ Produk tidak ditemukan');
+      return;
+    }
+
+    await ctx.reply(`⏳ Generating Phase 2 content untuk "${product.name}"...`);
+
+    const contentPack = await generatePhase2Content({
+      productName: product.name,
+      productDescription: product.description || '',
+      productPrice: Number(product.price),
+      productCategory: product.category,
+    });
+
+    // Create main content
+    const content = await prisma.content.create({
+      data: {
+        productId: product.id,
+        contentType: 'PHASE2_FULL',
+        platform: 'ALL',
+        hook: contentPack.hooks[0],
+        script: contentPack.scripts[0],
+        caption: contentPack.captions[0],
+        hashtags: contentPack.hashtags.slice(0, 30).join(','),
+        cta: contentPack.ctas[0],
+        telegramText: contentPack.telegramText,
+        whatsappText: contentPack.whatsappText,
+        tone: 'casual',
+        language: 'id',
+        status: 'DRAFT',
+        approvalStatus: 'PENDING',
+      },
+    });
+
+    // Create variants
+    const variantPromises: any[] = [];
+
+    contentPack.hooks.forEach((hook, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'HOOK',
+          variantIndex: index + 1,
+          contentValue: hook,
+        },
+      }));
+    });
+
+    contentPack.captions.forEach((caption, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CAPTION',
+          variantIndex: index + 1,
+          contentValue: caption,
+        },
+      }));
+    });
+
+    contentPack.ctas.forEach((cta, index) => {
+      variantPromises.push(prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CTA',
+          variantIndex: index + 1,
+          contentValue: cta,
+        },
+      }));
+    });
+
+    await Promise.all(variantPromises);
+
+    // Create quality score
+    await prisma.qualityScore.create({
+      data: {
+        contentId: content.id,
+        hookScore: contentPack.qualityScores.hookScore,
+        clarityScore: contentPack.qualityScores.clarityScore,
+        conversionScore: contentPack.qualityScores.conversionScore,
+        platformFitScore: contentPack.qualityScores.platformFitScore,
+        overallScore: contentPack.qualityScores.overallScore,
+        bestHook: contentPack.qualityScores.bestHook,
+        bestCaption: contentPack.qualityScores.bestCaption,
+        bestCta: contentPack.qualityScores.bestCta,
+        bestPlatform: contentPack.qualityScores.bestPlatform,
+        shouldPost: contentPack.qualityScores.shouldPost,
+        recommendation: contentPack.qualityScores.recommendation,
+      },
+    });
+
+    await ctx.reply(`✅ Phase 2 content generated!\n\n` +
+      `📦 Product: ${product.name}\n` +
+      `📝 ${contentPack.hooks.length} hooks, ${contentPack.captions.length} captions, ${contentPack.ctas.length} CTAs\n` +
+      `📈 Quality Score: ${contentPack.qualityScores.overallScore}/100\n\n` +
+      `🆔 Content ID: \`${content.id}\`\n\n` +
+      `Ketik /view ${content.id} untuk detail lengkap`,
+      { parse_mode: 'Markdown' }
+    );
+
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /view [id] - View content details
+bot.command('view', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    await ctx.reply('📎 Format: /view [content_id]');
+    return;
+  }
+
+  try {
+    const content = await prisma.content.findUnique({
+      where: { id: args },
+      include: {
+        product: true,
+        qualityScore: true,
+        contentVariants: { orderBy: { variantIndex: 'asc' } },
+      },
+    });
+
+    if (!content) {
+      await ctx.reply('❌ Content tidak ditemukan');
+      return;
+    }
+
+    // Group variants
+    const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
+    const captions = content.contentVariants.filter(v => v.variantType === 'CAPTION');
+    const ctas = content.contentVariants.filter(v => v.variantType === 'CTA');
+
+    const quality = content.qualityScore;
+
+    let detailText = `
+📝 *Content Detail*
+
+📦 *Product:* ${content.product.name}
+💰 *Harga:* ${formatPrice(content.product.price)}
+🏪 *Platform:* ${content.product.affiliatePlatform}
+
+📊 *Stats:*
+• Hooks: ${hooks.length}
+• Captions: ${captions.length}
+• CTAs: ${ctas.length}
+
+${quality ? `📈 *Quality Scores:*
+• Overall: ${quality.overallScore}/100
+• Hook: ${quality.hookScore}/100
+• Clarity: ${quality.clarityScore}/100
+• Conversion: ${quality.conversionScore}/100
+• Platform Fit: ${quality.platformFitScore}/100` : ''}
+
+${quality?.shouldPost ? '✅' : '⚠️'} *Status:* ${content.approvalStatus}
+
+📝 *Best Hook:*
+${truncate(quality?.bestHook || content.hook || '', 150)}
+`;
+
+    await ctx.reply(detailText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Approve', callback_data: `appr_${content.id}` },
+            { text: '❌ Reject', callback_data: `rejt_${content.id}` },
+          ],
+          [
+            { text: '🔄 Regenerate Hooks', callback_data: `regen_hooks_${content.id}` },
+            { text: '📋 View All Variants', callback_data: `variants_${content.id}` },
+          ]
+        ]
+      }
+    });
 
   } catch (error: any) {
     await ctx.reply(`❌ Error: ${error.message}`);
@@ -329,21 +611,21 @@ bot.command('approve', async (ctx) => {
       data: {
         approvalStatus: 'APPROVED',
         approvedAt: new Date(),
-        approvedBy: ctx.from.username || ctx.from.first_name,
+        approvedBy: ctx.from.username || 'admin',
       },
+      include: { product: true },
     });
 
-    await ctx.reply(`✅ Content approved!\n\nID: ${content.id}\nProduct: ${content.productId}`);
-
-    // Log approval
     await prisma.approvalLog.create({
       data: {
         contentId: content.id,
         action: 'APPROVED',
-        actionBy: ctx.from.username || 'unknown',
+        actionBy: ctx.from.username || 'admin',
         notes: 'Approved via Telegram bot',
       },
     });
+
+    await ctx.reply(`✅ *Content Approved!*\n\n📦 Product: ${content.product.name}\n⏰ Time: ${new Date().toLocaleString('id-ID')}\n\nKonten siap untuk di-schedule!`);
 
   } catch (error) {
     await ctx.reply('❌ Content tidak ditemukan');
@@ -371,126 +653,10 @@ bot.command('reject', async (ctx) => {
       },
     });
 
-    await ctx.reply(`❌ Content rejected!\n\nID: ${content.id}\nAlasan: ${reason}`);
+    await ctx.reply(`❌ *Content Rejected!*\n\nAlasan: ${reason}`);
 
   } catch (error) {
     await ctx.reply('❌ Content tidak ditemukan');
-  }
-});
-
-// /generate [productId] - Regenerate content
-bot.command('generate', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
-
-  if (!args) {
-    await ctx.reply('📎 Format: /generate [product_id]');
-    return;
-  }
-
-  try {
-    const product = await prisma.product.findUnique({ where: { id: args } });
-    if (!product) {
-      await ctx.reply('❌ Produk tidak ditemukan');
-      return;
-    }
-
-    await ctx.reply('⏳ Generating content...');
-
-    const contentPack = await generateContentPack({
-      productName: product.name,
-      productDescription: product.description || '',
-      productPrice: Number(product.price),
-      productCategory: product.category,
-    });
-
-    const content = await prisma.content.create({
-      data: {
-        productId: product.id,
-        contentType: 'MIXED_CONTENT',
-        platform: 'ALL',
-        hook: contentPack.hooks[0],
-        caption: contentPack.captions[0],
-        hashtags: contentPack.hashtags.slice(0, 15).join(' '),
-        cta: contentPack.ctas[0],
-        telegramText: contentPack.telegramText,
-        whatsappText: contentPack.whatsappText,
-        tone: 'casual',
-        language: 'id',
-        status: 'DRAFT',
-        approvalStatus: 'PENDING',
-      },
-    });
-
-    await ctx.reply(`✅ Content generated!\n\nHook: ${truncate(contentPack.hooks[0], 80)}\n\nID: ${content.id}`);
-
-  } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
-  }
-});
-
-// /regenerate [productId] - Regenerate all content for product
-bot.command('regenerate', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
-
-  if (!args) {
-    const products = await prisma.product.findMany({
-      where: { status: 'ACTIVE' },
-      take: 5,
-    });
-
-    const buttons = products.map(p => [
-      Markup.button.callback(p.name.substring(0, 30), `regen_${p.id}`)
-    ]);
-
-    await ctx.reply('📦 Pilih produk untuk regenerate:', {
-      ...Markup.inlineKeyboard(buttons)
-    });
-    return;
-  }
-
-  try {
-    const product = await prisma.product.findUnique({ where: { id: args } });
-    if (!product) {
-      await ctx.reply('❌ Produk tidak ditemukan');
-      return;
-    }
-
-    await ctx.reply('⏳ Regenerating content...');
-
-    const contentPack = await generateContentPack({
-      productName: product.name,
-      productDescription: product.description || '',
-      productPrice: Number(product.price),
-      productCategory: product.category,
-    });
-
-    await prisma.content.updateMany({
-      where: { productId: args, approvalStatus: 'PENDING' },
-      data: { approvalStatus: 'REGENERATED' },
-    });
-
-    const content = await prisma.content.create({
-      data: {
-        productId: product.id,
-        contentType: 'MIXED_CONTENT',
-        platform: 'ALL',
-        hook: contentPack.hooks[0],
-        caption: contentPack.captions[0],
-        hashtags: contentPack.hashtags.slice(0, 15).join(' '),
-        cta: contentPack.ctas[0],
-        telegramText: contentPack.telegramText,
-        whatsappText: contentPack.whatsappText,
-        tone: 'casual',
-        language: 'id',
-        status: 'DRAFT',
-        approvalStatus: 'PENDING',
-      },
-    });
-
-    await ctx.reply(`🔄 Content regenerated!\n\nNew Hook: ${truncate(contentPack.hooks[0], 80)}\n\nID: ${content.id}`);
-
-  } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
 
@@ -502,65 +668,74 @@ bot.on('callback_query', async (ctx) => {
   const data = ctx.callbackQuery.data;
 
   try {
-    // View product
-    if (data.startsWith('view_')) {
-      const productId = data.replace('view_', '');
-      const product = await prisma.product.findUnique({
-        where: { id: productId },
-        include: { links: true, contents: true },
+    // Approve
+    if (data.startsWith('appr_')) {
+      const contentId = data.replace('appr_', '');
+
+      await prisma.content.update({
+        where: { id: contentId },
+        data: {
+          approvalStatus: 'APPROVED',
+          approvedAt: new Date(),
+          approvedBy: ctx.from.username || 'admin',
+        },
       });
 
-      if (product) {
-        const text = `
-📦 *Product Detail*
+      await prisma.approvalLog.create({
+        data: {
+          contentId,
+          action: 'APPROVED',
+          actionBy: ctx.from.username || 'admin',
+        },
+      });
 
-*Nama:* ${product.name}
-*Kategori:* ${product.category}
-*Harga:* ${formatPrice(product.price)}
-*Komisi:* ${product.commission}%
+      await ctx.answerCallbackQuery('✅ Approved!');
+      await ctx.reply('✅ Content approved! Ready for scheduling.');
+    }
 
-*Platform:* ${product.affiliatePlatform}
-*Link:* ${product.affiliateLink}
+    // Reject
+    if (data.startsWith('rejt_')) {
+      const contentId = data.replace('rejt_', '');
 
-*Stats:*
-• Links: ${product.links.length}
-• Contents: ${product.contents.length}
-• Status: ${product.status}
-`;
-        await ctx.reply(text, { parse_mode: 'Markdown' });
-      }
+      await prisma.content.update({
+        where: { id: contentId },
+        data: {
+          approvalStatus: 'REJECTED',
+          rejectedAt: new Date(),
+          rejectionReason: 'Rejected via Telegram',
+        },
+      });
+
+      await ctx.answerCallbackQuery('❌ Rejected!');
+      await ctx.reply('❌ Content rejected.');
     }
 
     // View content
-    if (data.startsWith('content_')) {
-      const contentId = data.replace('content_', '');
+    if (data.startsWith('view_')) {
+      const contentId = data.replace('view_', '');
+
       const content = await prisma.content.findUnique({
         where: { id: contentId },
-        include: { product: true },
+        include: {
+          product: true,
+          qualityScore: true,
+          contentVariants: { orderBy: { variantIndex: 'asc' } },
+        },
       });
 
       if (content) {
-        const text = `
-📝 *Content Detail*
+        const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
+        const quality = content.qualityScore;
 
-*Product:* ${content.product.name}
-*Type:* ${content.contentType}
-*Platform:* ${content.platform}
-*Tone:* ${content.tone}
+        let reply = `📝 *${content.product.name}*\n\n`;
+        reply += `📈 Quality: ${quality?.overallScore || 0}/100\n`;
+        reply += `📝 Hooks: ${hooks.length} variants\n\n`;
+        reply += `*Best Hook:*\n${truncate(quality?.bestHook || content.hook || '', 100)}\n\n`;
+        reply += `Status: ${content.approvalStatus}`;
 
-*Hook:*
-${content.hook}
-
-*Caption:*
-${truncate(content.caption, 200)}
-
-*Hashtags:*
-${content.hashtags}
-
-*CTA:*
-${content.cta}
-`;
-        await ctx.reply(text, { parse_mode: 'Markdown',
+        await ctx.answerCallbackQuery();
+        await ctx.reply(reply, {
+          parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
               [
@@ -573,63 +748,165 @@ ${content.cta}
       }
     }
 
-    // Approve from callback
-    if (data.startsWith('appr_')) {
-      const contentId = data.replace('appr_', '');
-      await prisma.content.update({
-        where: { id: contentId },
-        data: { approvalStatus: 'APPROVED', approvedAt: new Date() },
-      });
-      await ctx.reply('✅ Approved!');
-    }
+    // Generate Phase 2 for product
+    if (data.startsWith('gen2_')) {
+      const productId = data.replace('gen2_', '');
 
-    // Reject from callback
-    if (data.startsWith('rejt_')) {
-      const contentId = data.replace('rejt_', '');
-      await prisma.content.update({
-        where: { id: contentId },
-        data: { approvalStatus: 'REJECTED', rejectedAt: new Date() },
-      });
-      await ctx.reply('❌ Rejected!');
-    }
-
-    // Regenerate from callback
-    if (data.startsWith('regen_')) {
-      const productId = data.replace('regen_', '');
-      await ctx.reply('⏳ Generating...');
+      await ctx.answerCallbackQuery('⏳ Generating...');
 
       const product = await prisma.product.findUnique({ where: { id: productId } });
-      if (product) {
-        const contentPack = await generateContentPack({
-          productName: product.name,
-          productPrice: Number(product.price),
-          productCategory: product.category,
-        });
+      if (!product) {
+        await ctx.reply('❌ Produk tidak ditemukan');
+        return;
+      }
 
-        await prisma.content.create({
+      const contentPack = await generatePhase2Content({
+        productName: product.name,
+        productDescription: product.description || '',
+        productPrice: Number(product.price),
+        productCategory: product.category,
+      });
+
+      const content = await prisma.content.create({
+        data: {
+          productId: product.id,
+          contentType: 'PHASE2_FULL',
+          platform: 'ALL',
+          hook: contentPack.hooks[0],
+          caption: contentPack.captions[0],
+          hashtags: contentPack.hashtags.slice(0, 30).join(','),
+          cta: contentPack.ctas[0],
+          telegramText: contentPack.telegramText,
+          whatsappText: contentPack.whatsappText,
+          status: 'DRAFT',
+          approvalStatus: 'PENDING',
+        },
+      });
+
+      // Create variants
+      const variantPromises: any[] = [];
+      contentPack.hooks.forEach((hook, index) => {
+        variantPromises.push(prisma.contentVariant.create({
           data: {
-            productId: product.id,
-            contentType: 'MIXED_CONTENT',
-            platform: 'ALL',
-            hook: contentPack.hooks[0],
-            caption: contentPack.captions[0],
-            hashtags: contentPack.hashtags.slice(0, 15).join(' '),
-            cta: contentPack.ctas[0],
-            telegramText: contentPack.telegramText,
-            status: 'DRAFT',
-            approvalStatus: 'PENDING',
+            contentId: content.id,
+            variantType: 'HOOK',
+            variantIndex: index + 1,
+            contentValue: hook,
           },
+        }));
+      });
+      contentPack.captions.forEach((caption, index) => {
+        variantPromises.push(prisma.contentVariant.create({
+          data: {
+            contentId: content.id,
+            variantType: 'CAPTION',
+            variantIndex: index + 1,
+            contentValue: caption,
+          },
+        }));
+      });
+      await Promise.all(variantPromises);
+
+      await prisma.qualityScore.create({
+        data: {
+          contentId: content.id,
+          hookScore: contentPack.qualityScores.hookScore,
+          clarityScore: contentPack.qualityScores.clarityScore,
+          conversionScore: contentPack.qualityScores.conversionScore,
+          platformFitScore: contentPack.qualityScores.platformFitScore,
+          overallScore: contentPack.qualityScores.overallScore,
+          bestHook: contentPack.qualityScores.bestHook,
+          bestCaption: contentPack.qualityScores.bestCaption,
+          bestCta: contentPack.qualityScores.bestCta,
+          bestPlatform: contentPack.qualityScores.bestPlatform,
+          shouldPost: contentPack.qualityScores.shouldPost,
+          recommendation: contentPack.qualityScores.recommendation,
+        },
+      });
+
+      await ctx.reply(`✅ Phase 2 generated!\n\n` +
+        `📦 ${product.name}\n` +
+        `📈 Score: ${contentPack.qualityScores.overallScore}/100\n\n` +
+        `ID: \`${content.id}\``,
+        { parse_mode: 'Markdown' }
+      );
+    }
+
+    // Regenerate
+    if (data.startsWith('regen_')) {
+      const parts = data.replace('regen_', '').split('_');
+      const type = parts[0];
+      const contentId = parts.slice(1).join('_');
+
+      await ctx.answerCallbackQuery('⏳ Regenerating...');
+
+      const content = await prisma.content.findUnique({
+        where: { id: contentId },
+        include: { product: true },
+      });
+
+      if (content) {
+        const contentPack = await generatePhase2Content({
+          productName: content.product.name,
+          productPrice: Number(content.product.price),
+          productCategory: content.product.category,
         });
 
-        await ctx.reply(`✅ Content regenerated!\n\nHook: ${truncate(contentPack.hooks[0], 80)}`);
+        // Delete old variants of type
+        if (type !== 'all') {
+          await prisma.contentVariant.deleteMany({
+            where: { contentId, variantType: type.toUpperCase() }
+          });
+
+          // Create new variants
+          const items = type === 'hooks' ? contentPack.hooks : contentPack.captions;
+          const variantType = type === 'hooks' ? 'HOOK' : 'CAPTION';
+
+          for (let i = 0; i < items.length; i++) {
+            await prisma.contentVariant.create({
+              data: {
+                contentId,
+                variantType,
+                variantIndex: i + 1,
+                contentValue: items[i],
+              },
+            });
+          }
+        }
+
+        await ctx.reply(`🔄 Regenerated ${type}!\n\nNew ${type}: ${truncate(contentPack.hooks[0] || contentPack.captions[0] || '', 80)}`);
       }
     }
 
-    ctx.answerCallbackQuery();
+    // View all variants
+    if (data.startsWith('variants_')) {
+      const contentId = data.replace('variants_', '');
+
+      const content = await prisma.content.findUnique({
+        where: { id: contentId },
+        include: { contentVariants: { orderBy: { variantIndex: 'asc' } } },
+      });
+
+      if (content) {
+        const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
+
+        let reply = `📝 *All Hooks (${hooks.length})*\n\n`;
+        hooks.slice(0, 5).forEach((h, i) => {
+          reply += `${i + 1}. ${truncate(h.contentValue, 80)}\n\n`;
+        });
+
+        if (hooks.length > 5) {
+          reply += `... dan ${hooks.length - 5} hooks lagi. Ketik /view ${contentId} untuk semua.`;
+        }
+
+        await ctx.answerCallbackQuery();
+        await ctx.reply(reply, { parse_mode: 'Markdown' });
+      }
+    }
 
   } catch (error: any) {
+    await ctx.answerCallbackQuery(`Error: ${error.message}`);
     await ctx.reply(`Error: ${error.message}`);
-    ctx.answerCallbackQuery();
   }
 });
 
@@ -640,15 +917,13 @@ ${content.cta}
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
 
-  // Skip if it's a command
   if (text.startsWith('/')) return;
 
-  // Check if it's a valid affiliate link
   const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
   const isLink = text.startsWith('http') && supportedPlatforms.some(p => text.toLowerCase().includes(p));
 
   if (isLink) {
-    ctx.reply('⏳ Processing link...');
+    ctx.reply('⏳ Processing link... Generating Phase 2 content...');
 
     try {
       const slug = `prod_${Date.now()}`;
@@ -676,8 +951,8 @@ bot.on('text', async (ctx) => {
         },
       });
 
-      const contentPack = await generateContentPack({
-        productName: 'New Product',
+      const contentPack = await generatePhase2Content({
+        productName: product.name,
         productPrice: 0,
         productCategory: 'Uncategorized',
       });
@@ -685,11 +960,11 @@ bot.on('text', async (ctx) => {
       const content = await prisma.content.create({
         data: {
           productId: product.id,
-          contentType: 'MIXED_CONTENT',
+          contentType: 'PHASE2_FULL',
           platform: 'ALL',
           hook: contentPack.hooks[0],
           caption: contentPack.captions[0],
-          hashtags: contentPack.hashtags.slice(0, 15).join(' '),
+          hashtags: contentPack.hashtags.slice(0, 30).join(','),
           cta: contentPack.ctas[0],
           telegramText: contentPack.telegramText,
           whatsappText: contentPack.whatsappText,
@@ -700,7 +975,31 @@ bot.on('text', async (ctx) => {
         },
       });
 
-      await ctx.reply(`✅ Product & content created!\n\nHook: ${truncate(contentPack.hooks[0], 80)}\n\nID: ${content.id}`);
+      await prisma.qualityScore.create({
+        data: {
+          contentId: content.id,
+          hookScore: contentPack.qualityScores.hookScore,
+          clarityScore: contentPack.qualityScores.clarityScore,
+          conversionScore: contentPack.qualityScores.conversionScore,
+          platformFitScore: contentPack.qualityScores.platformFitScore,
+          overallScore: contentPack.qualityScores.overallScore,
+          bestHook: contentPack.qualityScores.bestHook,
+          bestCaption: contentPack.qualityScores.bestCaption,
+          bestCta: contentPack.qualityScores.bestCta,
+          bestPlatform: contentPack.qualityScores.bestPlatform,
+          shouldPost: contentPack.qualityScores.shouldPost,
+          recommendation: contentPack.qualityScores.recommendation,
+        },
+      });
+
+      await ctx.reply(`✅ Product added & Phase 2 generated!\n\n` +
+        `📦 ${product.name}\n` +
+        `📈 Score: ${contentPack.qualityScores.overallScore}/100\n` +
+        `📝 Hook: ${truncate(contentPack.hooks[0], 80)}\n\n` +
+        `ID: \`${content.id}\``,
+        { parse_mode: 'Markdown' }
+      );
+
     } catch (error: any) {
       await ctx.reply(`Error: ${error.message}`);
     }
@@ -725,13 +1024,11 @@ function detectPlatform(link: string): string {
 // ============================================
 
 bot.launch().then(() => {
-  console.log('🤖 Telegram Bot started!');
-  console.log(`📱 Bot token: ${BOT_TOKEN.substring(0, 10)}...`);
+  console.log('🤖 Telegram Bot Phase 2 started!');
 }).catch((error) => {
   console.error('❌ Failed to start bot:', error.message);
 });
 
-// Graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 

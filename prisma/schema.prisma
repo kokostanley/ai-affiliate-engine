@@ -38,6 +38,8 @@ model Product {
   links           Link[]
   contents        Content[]
   scheduledPosts  ScheduledPost[]
+  videoPrompts    VideoPrompt[]
+  imagePrompts    ImagePrompt[]
 
   @@index([status])
   @@index([category])
@@ -141,6 +143,10 @@ model Content {
 
   scheduledPosts ScheduledPost[]
   approvalLogs   ApprovalLog[]
+  contentVariants ContentVariant[] @relation("ContentVariants")
+  videoPrompts   VideoPrompt[] @relation("VideoPrompts")
+  imagePrompts   ImagePrompt[] @relation("ImagePrompts")
+  qualityScores  QualityScore[] @relation("QualityScores")
 
   @@index([productId])
   @@index([contentType])
@@ -357,4 +363,120 @@ model WebhookLog {
 
   @@index([source])
   @@index([processed])
+}
+
+// ============================================
+// PHASE 2: CONTENT VARIANTS
+// Generated content variations per product
+// ============================================
+
+model ContentVariant {
+  id          String   @id @default(cuid())
+  contentId   String
+  content     Content  @relation("ContentVariants", fields: [contentId], references: [id], onDelete: Cascade)
+
+  variantType String   // HOOK, CAPTION, CTA, HASHTAG, SCRIPT, ANGLE
+  variantIndex Int     // 1-20 for hooks, 1-10 for captions, etc.
+
+  contentValue String
+
+  qualityScore Int?    // 1-100
+
+  createdAt DateTime @default(now())
+
+  @@index([contentId])
+  @@index([variantType])
+}
+
+// ============================================
+// PHASE 2: VIDEO PROMPTS
+// AI prompts for video generation
+// ============================================
+
+model VideoPrompt {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  contentId String?
+  content   Content? @relation("VideoPrompts", fields: [contentId], references: [id], onDelete: SetNull)
+
+  tool      String   // PIPPIT, VEO, SEEDANCE, SORA
+  prompt    String
+
+  duration  Int?     // seconds (30-45)
+  format    String   @default("9:16")
+
+  hook         String?
+  sceneBreakdown String?
+  voiceOver    String?
+  onScreenText String?
+  suggestedMusic String?
+
+  status    String   @default("DRAFT")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([tool])
+  @@index([status])
+}
+
+// ============================================
+// PHASE 2: IMAGE PROMPTS
+// AI prompts for image generation
+// ============================================
+
+model ImagePrompt {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  contentId String?
+  content   Content? @relation("ImagePrompts", fields: [contentId], references: [id], onDelete: SetNull)
+
+  imageType String   // THUMBNAIL, SOCIAL_POST, CAROUSEL, AD_CREATIVE
+  prompt    String
+
+  layout           String?
+  productPlacement String?
+  background       String?
+  textOverlay      String?
+  visualMood       String?
+
+  status    String   @default("DRAFT")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([imageType])
+  @@index([status])
+}
+
+// ============================================
+// PHASE 2: QUALITY SCORES
+// AI quality assessment per content
+// ============================================
+
+model QualityScore {
+  id        String   @id @default(cuid())
+  contentId String
+  content   Content  @relation("QualityScores", fields: [contentId], references: [id], onDelete: Cascade)
+
+  hookScore        Int     @default(0)   // 1-100
+  clarityScore     Int     @default(0)   // 1-100
+  conversionScore  Int     @default(0)   // 1-100
+  platformFitScore Int     @default(0)   // 1-100
+  overallScore     Int     @default(0)   // 1-100
+
+  bestHook         String?
+  bestCaption      String?
+  bestCta          String?
+  bestPlatform     String?
+
+  shouldPost       Boolean @default(false)
+  recommendation   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([contentId])
+  @@index([overallScore])
 }

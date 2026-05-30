@@ -84,6 +84,10 @@ const apiLimiter = rateLimit({
 
 app.use('/api', apiLimiter);
 
+// Import Phase 2 routes
+import phase2Router from './app/routes/phase2';
+app.use('/api/phase2', phase2Router);
+
 // ============================================
 // HEALTH CHECK
 // ============================================
