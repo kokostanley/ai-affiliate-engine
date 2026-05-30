@@ -92,6 +92,10 @@ app.use('/api/phase2', phase2Router);
 import productionRouter from './app/routes/production';
 app.use('/api/production', productionRouter);
 
+// Import Rendering routes
+import renderingRouter from './app/routes/rendering';
+app.use('/api/rendering', renderingRouter);
+
 // ============================================
 // HEALTH CHECK
 // ============================================

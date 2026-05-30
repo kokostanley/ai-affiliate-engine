@@ -445,6 +445,63 @@ model ProductionPackage {
   @@index([contentId])
   @@index([productId])
   @@index([status])
+
+  renderJobs RenderJob[]
+}
+
+// ============================================
+// PHASE 4: RENDERING QUEUE
+// Video/Image rendering jobs
+// ============================================
+
+model RenderJob {
+  id        String   @id @default(cuid())
+  productionPackageId String
+  productionPackage ProductionPackage @relation(fields: [productionPackageId], references: [id], onDelete: Cascade)
+
+  // Job type
+  jobType   String   // VIDEO, IMAGE
+  tool      String   // PIPPIT, VEO, SEEDANCE, SORA, DALL_E, MIDJOURNEY, STABLE_DIFFUSION
+
+  // Status: queued, processing, completed, failed
+  status   String   @default("queued")
+
+  // Prompt used
+  prompt   String
+
+  // Output
+  outputUrl   String?
+  outputType   String?  // video, image
+  thumbnailUrl String?
+
+  // Metadata
+  duration Int?    // seconds for video
+  format   String?
+  size     String?
+
+  // Provider API info
+  providerJobId String?
+  provider       String?
+
+  // Timing
+  queuedAt    DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Error handling
+  errorMessage String?
+  retryCount   Int @default(0)
+
+  // Cost tracking
+  costEstimate Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productionPackageId])
+  @@index([status])
+  @@index([tool])
+  @@index([providerJobId])
 }
 
 // ============================================

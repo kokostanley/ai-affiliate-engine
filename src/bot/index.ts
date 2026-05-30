@@ -1,6 +1,6 @@
 // ============================================
 // AI AFFILIATE DISTRIBUTION ENGINE
-// Telegram Bot - Phase 3 Enhanced
+// Telegram Bot - Phase 4 Enhanced
 // ============================================
 
 import { Telegraf, Markup, Context } from 'telegraf';
@@ -873,6 +873,190 @@ Use /showpack ${pkg.id} untuk detail lengkap
   }
 });
 
+// /render - List render jobs
+bot.command('render', async (ctx) => {
+  try {
+    const jobs = await prisma.renderJob.findMany({
+      include: {
+        productionPackage: { include: { product: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    if (jobs.length === 0) {
+      await ctx.reply('🎬 No render jobs yet.\n\nUse /renderpkg [package_id] to create jobs.');
+      return;
+    }
+
+    let text = `🎬 *Render Jobs (${jobs.length})*\n\n`;
+
+    for (const job of jobs) {
+      const status = job.status === 'completed' ? '✅' :
+                     job.status === 'processing' ? '⏳' :
+                     job.status === 'failed' ? '❌' : '⏳';
+      const type = job.jobType === 'VIDEO' ? '🎬' : '🖼️';
+
+      text += `${status} ${type} *${job.tool}*\n`;
+      text += `   ${job.productionPackage.product.name}\n`;
+      text += `   Status: ${job.status}\n`;
+      text += `   ID: \`${job.id.substring(0, 8)}...\`\n\n`;
+    }
+
+    text += '\nUse /renderjob [id] for details';
+
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Error fetching render jobs');
+  }
+});
+
+// /renderpkg [package_id] - Create render jobs for package
+bot.command('renderpkg', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    await ctx.reply('📎 Format: /renderpkg [package_id]\n\nUse /production to find package IDs.');
+    return;
+  }
+
+  try {
+    const pkg = await prisma.productionPackage.findUnique({
+      where: { id: args },
+      include: { product: true },
+    });
+
+    if (!pkg) {
+      await ctx.reply('❌ Package not found');
+      return;
+    }
+
+    // Create video render jobs
+    const jobs = [];
+
+    if (pkg.videoPromptPippit) {
+      jobs.push({
+        productionPackageId: pkg.id,
+        jobType: 'VIDEO',
+        tool: 'PIPPIT',
+        prompt: pkg.videoPromptPippit,
+        duration: 30,
+        format: '9:16',
+        status: 'queued',
+      });
+    }
+
+    if (pkg.videoPromptVeo) {
+      jobs.push({
+        productionPackageId: pkg.id,
+        jobType: 'VIDEO',
+        tool: 'VEO',
+        prompt: pkg.videoPromptVeo,
+        duration: 45,
+        format: '16:9',
+        status: 'queued',
+      });
+    }
+
+    if (pkg.imagePromptThumbnail) {
+      jobs.push({
+        productionPackageId: pkg.id,
+        jobType: 'IMAGE',
+        tool: 'DALL_E',
+        prompt: pkg.imagePromptThumbnail,
+        status: 'queued',
+      });
+    }
+
+    if (jobs.length === 0) {
+      await ctx.reply('⚠️ No prompts available in this package');
+      return;
+    }
+
+    await prisma.renderJob.createMany({ data: jobs });
+
+    await ctx.reply(`🎬 *Render Jobs Created!*\n\nPackage: ${pkg.product.name}\n\nCreated ${jobs.length} jobs:\n${jobs.map(j => `• ${j.jobType === 'VIDEO' ? '🎬' : '🖼️'} ${j.tool}`).join('\n')}\n\nUse /render to see all jobs`,
+      { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /renderjob [id] - Show render job details
+bot.command('renderjob', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    await ctx.reply('📎 Format: /renderjob [job_id]');
+    return;
+  }
+
+  try {
+    const job = await prisma.renderJob.findUnique({
+      where: { id: args },
+      include: { productionPackage: { include: { product: true } } },
+    });
+
+    if (!job) {
+      await ctx.reply('❌ Job not found');
+      return;
+    }
+
+    const status = job.status === 'completed' ? '✅' :
+                   job.status === 'processing' ? '⏳' :
+                   job.status === 'failed' ? '❌' : '⏳';
+
+    let text = `
+🎬 *Render Job Details*
+
+${status} *Tool:* ${job.tool}
+📦 *Type:* ${job.jobType}
+📊 *Status:* ${job.status}
+${job.duration ? `⏱️ *Duration:* ${job.duration}s` : ''}
+${job.format ? `📐 *Format:* ${job.format}` : ''}
+
+*Product:* ${job.productionPackage.product.name}
+
+${job.errorMessage ? `❌ *Error:* ${job.errorMessage}` : ''}
+${job.outputUrl ? `📎 *Output:* ${job.outputUrl}` : ''}
+
+🆔 ID: \`${job.id}\`
+`;
+
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /renderstatus - Quick render stats
+bot.command('renderstatus', async (ctx) => {
+  try {
+    const [total, queued, processing, completed, failed] = await Promise.all([
+      prisma.renderJob.count(),
+      prisma.renderJob.count({ where: { status: 'queued' } }),
+      prisma.renderJob.count({ where: { status: 'processing' } }),
+      prisma.renderJob.count({ where: { status: 'completed' } }),
+      prisma.renderJob.count({ where: { status: 'failed' } }),
+    ]);
+
+    await ctx.reply(`
+📊 *Render Queue Status*
+
+🎬 Total: ${total}
+⏳ Queued: ${queued}
+🔄 Processing: ${processing}
+✅ Completed: ${completed}
+❌ Failed: ${failed}
+`, { parse_mode: 'Markdown' });
+
+  } catch (error) {
+    await ctx.reply('❌ Error fetching stats');
+  }
+});
+
 // ============================================
 // CALLBACK HANDLERS
 // ============================================
@@ -1204,6 +1388,47 @@ bot.on('callback_query', async (ctx) => {
         await ctx.answerCallbackQuery();
         await ctx.reply(reply, { parse_mode: 'Markdown' });
       }
+    }
+
+    // Render job callbacks
+    if (data.startsWith('rj_start_')) {
+      const jobId = data.replace('rj_start_', '');
+      await prisma.renderJob.update({
+        where: { id: jobId },
+        data: { status: 'processing', startedAt: new Date() },
+      });
+      await ctx.answerCallbackQuery('⏳ Processing...');
+      await ctx.reply('⏳ Job started processing');
+    }
+
+    if (data.startsWith('rj_complete_')) {
+      const jobId = data.replace('rj_complete_', '');
+      await prisma.renderJob.update({
+        where: { id: jobId },
+        data: { status: 'completed', completedAt: new Date() },
+      });
+      await ctx.answerCallbackQuery('✅ Completed!');
+      await ctx.reply('✅ Job marked as completed');
+    }
+
+    if (data.startsWith('rj_fail_')) {
+      const jobId = data.replace('rj_fail_', '');
+      await prisma.renderJob.update({
+        where: { id: jobId },
+        data: { status: 'failed', errorMessage: 'Failed via Telegram', completedAt: new Date() },
+      });
+      await ctx.answerCallbackQuery('❌ Failed');
+      await ctx.reply('❌ Job marked as failed');
+    }
+
+    if (data.startsWith('rj_retry_')) {
+      const jobId = data.replace('rj_retry_', '');
+      await prisma.renderJob.update({
+        where: { id: jobId },
+        data: { status: 'queued', errorMessage: null },
+      });
+      await ctx.answerCallbackQuery('🔄 Queued for retry');
+      await ctx.reply('🔄 Job queued for retry');
     }
 
   } catch (error: any) {
