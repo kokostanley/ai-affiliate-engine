@@ -1,292 +1,697 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Wand2, Send, CheckCircle, FileText, Hash, MessageSquare } from 'lucide-react';
 import { Header } from '@/components/Header';
-import { Button } from '@/components/ui/Button';
+import { FileText, Star, Award, CheckCircle, XCircle, RefreshCw, Copy, Check, BarChart3, Video, Image as ImageIcon, Zap } from 'lucide-react';
+
+interface ContentData {
+  id: string;
+  productId: string;
+  product?: { id: string; name: string; price: number; affiliatePlatform: string };
+  contentType: string;
+  platform: string;
+  status: string;
+  approvalStatus: string;
+  hook?: string;
+  caption?: string;
+  cta?: string;
+  script?: string;
+  hashtags?: string;
+  telegramText?: string;
+  whatsappText?: string;
+  videoPrompts?: VideoPrompt[];
+  imagePrompts?: ImagePrompt[];
+  qualityScores?: QualityScores;
+  variants?: {
+    hooks: { index: number; content: string }[];
+    captions: { index: number; content: string }[];
+    ctas: { index: number; content: string }[];
+    scripts: { index: number; content: string }[];
+  };
+}
+
+interface VideoPrompt {
+  id: string;
+  tool: string;
+  prompt: string;
+  duration: number;
+  format: string;
+  hook: string;
+  sceneBreakdown: string;
+  voiceOver: string;
+  onScreenText: string;
+  suggestedMusic: string;
+}
+
+interface ImagePrompt {
+  id: string;
+  imageType: string;
+  prompt: string;
+  layout: string;
+  productPlacement: string;
+  background: string;
+  textOverlay: string;
+  visualMood: string;
+}
+
+interface QualityScores {
+  hookScore: number;
+  clarityScore: number;
+  conversionScore: number;
+  platformFitScore: number;
+  overallScore: number;
+  bestHook: string;
+  bestCaption: string;
+  bestCta: string;
+  bestPlatform: string;
+  shouldPost: boolean;
+  recommendation: string;
+}
 
 interface Product {
   id: string;
   name: string;
+  price: number;
+  category: string;
+  affiliatePlatform: string;
 }
 
-interface GeneratedContent {
-  hook?: string;
-  script?: string;
-  caption?: string;
-  hashtags?: string[];
-  cta?: string;
-  telegramText?: string;
-}
+const API_BASE = 'http://localhost:3001';
 
 export default function ContentPage() {
   const [products, setProducts] = useState<Product[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState('');
-  const [platform, setPlatform] = useState('TIKTOK');
-  const [contentType, setContentType] = useState('TIKTOK_SCRIPT');
-  const [generatedContent, setGeneratedContent] = useState<GeneratedContent | null>(null);
+  const [contents, setContents] = useState<ContentData[]>([]);
+  const [selectedContent, setSelectedContent] = useState<ContentData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
-
-  const platforms = [
-    { value: 'TIKTOK', label: 'TikTok' },
-    { value: 'INSTAGRAM', label: 'Instagram' },
-    { value: 'YOUTUBE', label: 'YouTube' },
-    { value: 'FACEBOOK', label: 'Facebook' },
-    { value: 'TELEGRAM', label: 'Telegram' },
-    { value: 'WHATSAPP', label: 'WhatsApp' },
-  ];
-
-  const contentTypes = [
-    { value: 'TIKTOK_HOOK', label: 'Hook Video' },
-    { value: 'TIKTOK_SCRIPT', label: 'Script Lengkap' },
-    { value: 'REELS_SCRIPT', label: 'Reels Script' },
-    { value: 'SHORTS_SCRIPT', label: 'Shorts Script' },
-    { value: 'CAPTION', label: 'Caption' },
-    { value: 'TELEGRAM_PROMO', label: 'Telegram Promo' },
-    { value: 'WHATSAPP_PROMO', label: 'WhatsApp Promo' },
-    { value: 'MIXED_CONTENT', label: 'All Content' },
-  ];
+  const [activeTab, setActiveTab] = useState<'overview' | 'variants' | 'prompts' | 'quality'>('overview');
+  const [copiedItem, setCopiedItem] = useState<string | null>(null);
+  const [variantData, setVariantData] = useState<any>(null);
 
   useEffect(() => {
     fetchProducts();
+    fetchContents();
   }, []);
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products');
+      const res = await fetch(`${API_BASE}/api/products`);
       const data = await res.json();
       if (data.success) {
-        setProducts(data.data.products || []);
+        setProducts(data.data.products);
       }
     } catch (error) {
       console.error('Error fetching products:', error);
     }
   };
 
-  const handleGenerate = async () => {
-    if (!selectedProduct) return;
-
-    setGenerating(true);
+  const fetchContents = async () => {
     try {
-      const res = await fetch('/api/content/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selectedProduct,
-          platform,
-          contentType,
-          tone: 'casual',
-          language: 'id',
-        }),
-      });
-
-      if (res.status === 501) {
-        // AI not available, use placeholder
-        setGeneratedContent({
-          hook: 'Check out this amazing product! 🎉',
-          script: 'DAFTAR SEQUENCE:\n\n0-3s: HOOK - "Tahukah kamu..."\n3-15s: PROBLEM - "Setiap hari kita..."\n15-40s: SOLUTION - "Nah ini dia..."\n40-60s: CTA - "Link ada di bio!"',
-          caption: 'Get this amazing product now! 💰\n\nLink in bio!',
-          hashtags: ['#produk', '#viral', '#rekomendasi', '#affiliate'],
-          cta: 'Link in bio!',
-        });
-      } else {
-        const data = await res.json();
-        if (data.success) {
-          setGeneratedContent(data.data);
+      const res = await fetch(`${API_BASE}/api/content?limit=50`);
+      const data = await res.json();
+      if (data.success) {
+        setContents(data.data);
+        if (data.data.length > 0 && !selectedContent) {
+          loadContentDetail(data.data[0].id);
         }
       }
     } catch (error) {
-      console.error('Error generating content:', error);
-    } finally {
-      setGenerating(false);
+      console.error('Error fetching contents:', error);
     }
   };
 
-  const handleCopyContent = (text: string) => {
-    navigator.clipboard.writeText(text);
+  const loadContentDetail = async (contentId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/phase2/${contentId}`);
+      const data = await res.json();
+      if (data.success) {
+        setSelectedContent(data.data);
+        setVariantData(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching content detail:', error);
+    }
   };
+
+  const generatePhase2 = async (productId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/phase2/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ productId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchContents();
+        await loadContentDetail(data.data.contentId);
+      }
+    } catch (error) {
+      console.error('Error generating Phase 2:', error);
+    }
+    setLoading(false);
+  };
+
+  const handleApprove = async (contentId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/phase2/${contentId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approvedBy: 'dashboard' }),
+      });
+      await fetchContents();
+      await loadContentDetail(contentId);
+    } catch (error) {
+      console.error('Error approving:', error);
+    }
+  };
+
+  const handleReject = async (contentId: string) => {
+    try {
+      await fetch(`${API_BASE}/api/phase2/${contentId}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Rejected from dashboard' }),
+      });
+      await fetchContents();
+      await loadContentDetail(contentId);
+    } catch (error) {
+      console.error('Error rejecting:', error);
+    }
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedItem(id);
+    setTimeout(() => setCopiedItem(null), 2000);
+  };
+
+  const formatPrice = (price: number) => {
+    return `Rp ${price.toLocaleString('id-ID')}`;
+  };
+
+  const pendingContents = contents.filter(c => c.approvalStatus === 'PENDING');
+  const approvedContents = contents.filter(c => c.approvalStatus === 'APPROVED');
+  const rejectedContents = contents.filter(c => c.approvalStatus === 'REJECTED');
+
+  const qualityScores = variantData?.qualityScores;
+  const videoPrompts = variantData?.videoPrompts || [];
+  const imagePrompts = variantData?.imagePrompts || [];
+  const variants = variantData?.variants || { hooks: [], captions: [], ctas: [], scripts: [] };
 
   return (
     <div className="min-h-screen bg-[#0a0f1a]">
-      <Header title="Content Generator" description="Buat konten affiliate dengan AI" />
+      <Header title="Content Hub Phase 2" description="AI Generated Content dengan Quality Scoring" />
 
       <div className="p-6 space-y-6">
-        {/* Generator Form */}
-        <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Generate New Content</h3>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Product</label>
-              <select
-                value={selectedProduct}
-                onChange={(e) => setSelectedProduct(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2.5 text-white focus:border-blue-500 focus:outline-none"
-              >
-                <option value="">Select product...</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Platform</label>
-              <select
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2.5 text-white focus:border-blue-500 focus:outline-none"
-              >
-                {platforms.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">Content Type</label>
-              <select
-                value={contentType}
-                onChange={(e) => setContentType(e.target.value)}
-                className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2.5 text-white focus:border-blue-500 focus:outline-none"
-              >
-                {contentTypes.map((c) => (
-                  <option key={c.value} value={c.value}>{c.label}</option>
-                ))}
-              </select>
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-yellow-400/10 rounded-lg">
+                <FileText className="h-5 w-5 text-yellow-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-white">{contents.length}</p>
+                <p className="text-sm text-gray-400">Total Content</p>
+              </div>
             </div>
           </div>
-
-          <div className="mt-4 flex justify-end">
-            <Button onClick={handleGenerate} disabled={!selectedProduct || generating}>
-              <Wand2 className="h-4 w-4 mr-2" />
-              {generating ? 'Generating...' : 'Generate Content'}
-            </Button>
+          <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-yellow-500/10 rounded-lg">
+                <RefreshCw className="h-5 w-5 text-yellow-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-white">{pendingContents.length}</p>
+                <p className="text-sm text-gray-400">Pending</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-400/10 rounded-lg">
+                <CheckCircle className="h-5 w-5 text-green-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-white">{approvedContents.length}</p>
+                <p className="text-sm text-gray-400">Approved</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-red-400/10 rounded-lg">
+                <XCircle className="h-5 w-5 text-red-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-white">{rejectedContents.length}</p>
+                <p className="text-sm text-gray-400">Rejected</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Generated Content */}
-        {generatedContent && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">Generated Content</h3>
-              <div className="flex gap-2">
-                <Button size="sm" variant="secondary">
-                  <Send className="h-4 w-4 mr-2" />
-                  Send to Telegram
-                </Button>
-                <Button size="sm" variant="primary">
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Approve
-                </Button>
-              </div>
+        {/* Product Selector & Generate */}
+        <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-6">
+          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+            <div className="flex-1 w-full">
+              <label className="block text-sm font-medium text-gray-400 mb-2">Select Product</label>
+              <select
+                value=""
+                onChange={(e) => generatePhase2(e.target.value)}
+                className="w-full bg-[#1a2332] border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Select product to generate Phase 2...</option>
+                {products.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} - {formatPrice(p.price)}
+                  </option>
+                ))}
+              </select>
             </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => fetchContents()}
+                className="px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium flex items-center gap-2"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Refresh
+              </button>
+            </div>
+          </div>
+        </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
-              {/* Hook */}
-              {generatedContent.hook && (
-                <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-orange-400">
-                      <FileText className="h-4 w-4" />
-                      <span className="text-sm font-medium">Hook</span>
+        {/* Approval Queue */}
+        <div className="bg-[#0f172a] border border-gray-800 rounded-xl p-6">
+          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <Zap className="h-5 w-5 text-yellow-400" />
+            Approval Queue ({contents.length})
+          </h2>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {contents.length === 0 ? (
+              <p className="text-gray-400 py-4">No content yet. Select a product above to generate Phase 2 content.</p>
+            ) : (
+              contents.map((content) => {
+                const isSelected = selectedContent?.id === content.id;
+                const contentAny = content as any;
+                const overallScore = contentAny.qualityScores?.overallScore || 0;
+
+                return (
+                  <div
+                    key={content.id}
+                    onClick={() => loadContentDetail(content.id)}
+                    className={`bg-[#1a2332] rounded-lg p-3 cursor-pointer border transition-all ${
+                      isSelected ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-700 hover:border-gray-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            content.approvalStatus === 'APPROVED' ? 'bg-green-400/20 text-green-400' :
+                            content.approvalStatus === 'REJECTED' ? 'bg-red-400/20 text-red-400' :
+                            'bg-yellow-400/20 text-yellow-400'
+                          }`}>
+                            {content.approvalStatus}
+                          </span>
+                          <span className="text-white font-medium text-sm">
+                            {content.product?.name || contentAny.product?.name || 'Loading...'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          Platform: {content.platform} | Type: {content.contentType}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-white">{overallScore}</p>
+                          <p className="text-xs text-gray-500">/100</p>
+                        </div>
+                        {content.approvalStatus === 'PENDING' && (
+                          <div className="flex gap-1">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleApprove(content.id); }}
+                              className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-xs font-medium"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleReject(content.id); }}
+                              className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-medium"
+                            >
+                              ✗
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleCopyContent(generatedContent.hook!)}
-                      className="text-xs text-gray-400 hover:text-white"
-                    >
-                      Copy
-                    </button>
                   </div>
-                  <p className="text-gray-300">{generatedContent.hook}</p>
-                </div>
-              )}
+                );
+              })
+            )}
+          </div>
+        </div>
 
-              {/* Script */}
-              {generatedContent.script && (
-                <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-blue-400">
-                      <MessageSquare className="h-4 w-4" />
-                      <span className="text-sm font-medium">Script</span>
+        {/* Content Tabs */}
+        <div className="bg-[#0f172a] border border-gray-800 rounded-xl overflow-hidden">
+          <div className="border-b border-gray-800">
+            <div className="flex overflow-x-auto">
+              <button
+                onClick={() => setActiveTab('overview')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'overview' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                Best Content
+              </button>
+              <button
+                onClick={() => setActiveTab('variants')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'variants' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                All Variants
+              </button>
+              <button
+                onClick={() => setActiveTab('prompts')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'prompts' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                Video & Image Prompts
+              </button>
+              <button
+                onClick={() => setActiveTab('quality')}
+                className={`px-6 py-4 text-sm font-medium border-b-2 whitespace-nowrap ${
+                  activeTab === 'quality' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'
+                }`}
+              >
+                Quality Analytics
+              </button>
+            </div>
+          </div>
+
+          <div className="p-6">
+            {/* Overview / Best Content */}
+            {activeTab === 'overview' && (
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Star className="h-5 w-5 text-yellow-400" />
+                    Best Content (AI Selected)
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Best Hook</p>
+                      <p className="text-white">{qualityScores?.bestHook || selectedContent?.hook || 'No hook yet'}</p>
                     </div>
-                    <button
-                      onClick={() => handleCopyContent(generatedContent.script!)}
-                      className="text-xs text-gray-400 hover:text-white"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{generatedContent.script}</p>
-                </div>
-              )}
-
-              {/* Caption */}
-              {generatedContent.caption && (
-                <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-purple-400">Caption</span>
-                    <button
-                      onClick={() => handleCopyContent(generatedContent.caption!)}
-                      className="text-xs text-gray-400 hover:text-white"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{generatedContent.caption}</p>
-                </div>
-              )}
-
-              {/* Hashtags */}
-              {generatedContent.hashtags && (
-                <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-green-400">
-                      <Hash className="h-4 w-4" />
-                      <span className="text-sm font-medium">Hashtags</span>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Best Caption</p>
+                      <p className="text-white">{qualityScores?.bestCaption || selectedContent?.caption || 'No caption yet'}</p>
                     </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Best CTA</p>
+                      <p className="text-white">{qualityScores?.bestCta || selectedContent?.cta || 'No CTA yet'}</p>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Best Platform</p>
+                      <p className="text-white">{qualityScores?.bestPlatform || 'TBD'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Messaging */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4">Messaging Templates</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm text-gray-400">Telegram Message</p>
+                        <button
+                          onClick={() => copyToClipboard(selectedContent?.telegramText || '', 'telegram')}
+                          className="text-blue-400 hover:text-blue-300"
+                        >
+                          {copiedItem === 'telegram' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <p className="text-white text-sm whitespace-pre-wrap">{selectedContent?.telegramText || 'No content'}</p>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm text-gray-400">WhatsApp Message</p>
+                        <button
+                          onClick={() => copyToClipboard(selectedContent?.whatsappText || '', 'whatsapp')}
+                          className="text-blue-400 hover:text-blue-300"
+                        >
+                          {copiedItem === 'whatsapp' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      <p className="text-white text-sm whitespace-pre-wrap">{selectedContent?.whatsappText || 'No content'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hashtags */}
+                <div className="bg-[#1a2332] rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-gray-400">Hashtags</p>
                     <button
-                      onClick={() => handleCopyContent(generatedContent.hashtags!.join(' '))}
-                      className="text-xs text-gray-400 hover:text-white"
+                      onClick={() => copyToClipboard(selectedContent?.hashtags || '', 'hashtags')}
+                      className="text-blue-400 hover:text-blue-300 flex items-center gap-1"
                     >
-                      Copy
+                      <Copy className="h-4 w-4" />
+                      Copy All
                     </button>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {generatedContent.hashtags.map((tag, i) => (
-                      <span key={i} className="rounded-full bg-green-400/10 px-3 py-1 text-sm text-green-400">
-                        {tag}
+                    {selectedContent?.hashtags?.split(',').map((tag, i) => (
+                      <span key={i} className="px-2 py-1 bg-blue-400/10 text-blue-400 rounded text-sm">
+                        {tag.trim()}
                       </span>
                     ))}
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* CTA */}
-              {generatedContent.cta && (
-                <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-orange-400">CTA</span>
-                    <button
-                      onClick={() => handleCopyContent(generatedContent.cta!)}
-                      className="text-xs text-gray-400 hover:text-white"
-                    >
-                      Copy
-                    </button>
+            {/* Variants */}
+            {activeTab === 'variants' && (
+              <div className="space-y-6">
+                {/* Hooks */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4">Hooks ({variants.hooks?.length || 0})</h3>
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {variants.hooks?.length > 0 ? variants.hooks.map((h: any) => (
+                      <div key={h.index} className="bg-[#1a2332] rounded-lg p-3 flex items-start gap-3">
+                        <span className="px-2 py-1 bg-orange-400/20 text-orange-400 rounded text-xs font-medium min-w-[2rem] text-center">
+                          {h.index}
+                        </span>
+                        <p className="text-white flex-1">{h.content}</p>
+                        <button
+                          onClick={() => copyToClipboard(h.content, `hook-${h.index}`)}
+                          className="text-gray-400 hover:text-white"
+                        >
+                          {copiedItem === `hook-${h.index}` ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    )) : (
+                      <p className="text-gray-400">No hooks generated yet</p>
+                    )}
                   </div>
-                  <p className="text-gray-300">{generatedContent.cta}</p>
                 </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Empty State */}
-        {!generatedContent && !loading && (
-          <div className="rounded-xl border border-gray-800 bg-[#0f172a] p-12 text-center">
-            <Wand2 className="mx-auto h-12 w-12 text-gray-600" />
-            <p className="mt-4 text-gray-400">Select a product and click Generate to create content</p>
+                {/* Captions */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4">Captions ({variants.captions?.length || 0})</h3>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {variants.captions?.length > 0 ? variants.captions.map((c: any) => (
+                      <div key={c.index} className="bg-[#1a2332] rounded-lg p-3">
+                        <div className="flex items-start gap-3">
+                          <span className="px-2 py-1 bg-purple-400/20 text-purple-400 rounded text-xs font-medium min-w-[2rem] text-center">
+                            {c.index}
+                          </span>
+                          <p className="text-white flex-1">{c.content}</p>
+                          <button
+                            onClick={() => copyToClipboard(c.content, `caption-${c.index}`)}
+                            className="text-gray-400 hover:text-white"
+                          >
+                            {copiedItem === `caption-${c.index}` ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-gray-400">No captions generated yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* CTAs */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4">CTAs ({variants.ctas?.length || 0})</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {variants.ctas?.length > 0 ? variants.ctas.map((c: any) => (
+                      <div key={c.index} className="bg-[#1a2332] rounded-lg p-3 flex items-center gap-3">
+                        <span className="px-2 py-1 bg-green-400/20 text-green-400 rounded text-xs font-medium min-w-[2rem] text-center">
+                          {c.index}
+                        </span>
+                        <p className="text-white flex-1">{c.content}</p>
+                      </div>
+                    )) : (
+                      <p className="text-gray-400">No CTAs generated yet</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Video & Image Prompts */}
+            {activeTab === 'prompts' && (
+              <div className="space-y-6">
+                {/* Video Prompts */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Video className="h-5 w-5 text-blue-400" />
+                    Video AI Prompts ({videoPrompts.length})
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {videoPrompts.length > 0 ? videoPrompts.map((vp: VideoPrompt) => (
+                      <div key={vp.id} className="bg-[#1a2332] rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="px-3 py-1 bg-blue-400/20 text-blue-400 rounded-lg text-sm font-medium">
+                            {vp.tool}
+                          </span>
+                          <span className="text-sm text-gray-400">{vp.duration}s | {vp.format}</span>
+                        </div>
+                        <p className="text-sm text-gray-300 mb-3">{vp.prompt}</p>
+                        <div className="space-y-2 pt-3 border-t border-gray-700">
+                          <div>
+                            <p className="text-xs text-gray-500">Hook</p>
+                            <p className="text-sm text-white">{vp.hook}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500">Voice Over</p>
+                            <p className="text-sm text-white">{vp.voiceOver}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-gray-500">On Screen Text</p>
+                            <p className="text-sm text-white">{vp.onScreenText}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-gray-400">No video prompts generated yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Image Prompts */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <ImageIcon className="h-5 w-5 text-purple-400" />
+                    Image AI Prompts ({imagePrompts.length})
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {imagePrompts.length > 0 ? imagePrompts.map((ip: ImagePrompt) => (
+                      <div key={ip.id} className="bg-[#1a2332] rounded-lg p-4">
+                        <span className="px-3 py-1 bg-purple-400/20 text-purple-400 rounded text-xs font-medium">
+                          {ip.imageType}
+                        </span>
+                        <p className="text-sm text-gray-300 mt-3">{ip.prompt}</p>
+                        <div className="mt-3 pt-3 border-t border-gray-700 space-y-1">
+                          <p className="text-xs text-gray-500">Layout: <span className="text-gray-300">{ip.layout}</span></p>
+                          <p className="text-xs text-gray-500">Mood: <span className="text-gray-300">{ip.visualMood}</span></p>
+                        </div>
+                      </div>
+                    )) : (
+                      <p className="text-gray-400">No image prompts generated yet</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Quality Analytics */}
+            {activeTab === 'quality' && (
+              <div className="space-y-6">
+                {/* Score Overview */}
+                <div className="bg-[#1a2332] rounded-xl p-6">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-semibold text-white">Quality Score Overview</h3>
+                    <div className="text-right">
+                      <p className="text-4xl font-bold text-blue-400">{qualityScores?.overallScore || 0}</p>
+                      <p className="text-sm text-gray-400">Overall Score</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-[#0f172a] rounded-lg p-4 text-center">
+                      <p className="text-2xl font-bold text-green-400">{qualityScores?.hookScore || 0}</p>
+                      <p className="text-sm text-gray-400 mt-1">Hook Score</p>
+                    </div>
+                    <div className="bg-[#0f172a] rounded-lg p-4 text-center">
+                      <p className="text-2xl font-bold text-blue-400">{qualityScores?.clarityScore || 0}</p>
+                      <p className="text-sm text-gray-400 mt-1">Clarity Score</p>
+                    </div>
+                    <div className="bg-[#0f172a] rounded-lg p-4 text-center">
+                      <p className="text-2xl font-bold text-yellow-400">{qualityScores?.conversionScore || 0}</p>
+                      <p className="text-sm text-gray-400 mt-1">Conversion Score</p>
+                    </div>
+                    <div className="bg-[#0f172a] rounded-lg p-4 text-center">
+                      <p className="text-2xl font-bold text-purple-400">{qualityScores?.platformFitScore || 0}</p>
+                      <p className="text-sm text-gray-400 mt-1">Platform Fit</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Score Bars */}
+                <div className="bg-[#1a2332] rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4">Score Breakdown</h3>
+                  <div className="space-y-4">
+                    {[
+                      { label: 'Hook Score', value: qualityScores?.hookScore || 0, color: 'bg-green-400' },
+                      { label: 'Clarity Score', value: qualityScores?.clarityScore || 0, color: 'bg-blue-400' },
+                      { label: 'Conversion Score', value: qualityScores?.conversionScore || 0, color: 'bg-yellow-400' },
+                      { label: 'Platform Fit Score', value: qualityScores?.platformFitScore || 0, color: 'bg-purple-400' },
+                      { label: 'Overall Score', value: qualityScores?.overallScore || 0, color: 'bg-blue-500' },
+                    ].map((score) => (
+                      <div key={score.label}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-gray-400">{score.label}</span>
+                          <span className="text-white font-medium">{score.value}/100</span>
+                        </div>
+                        <div className="h-3 bg-[#0f172a] rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${score.color} transition-all duration-500`}
+                            style={{ width: `${score.value}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recommendation */}
+                <div className="bg-[#1a2332] rounded-xl p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <Award className="h-5 w-5 text-yellow-400" />
+                    AI Recommendation
+                  </h3>
+                  <div className="flex items-center gap-4 mb-4">
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      qualityScores?.shouldPost ? 'bg-green-400/20 text-green-400' : 'bg-yellow-400/20 text-yellow-400'
+                    }`}>
+                      {qualityScores?.shouldPost ? '✅ Ready to Post' : '⚠️ Needs Review'}
+                    </span>
+                    <span className="text-sm text-gray-400">
+                      Best Platform: <span className="text-white">{qualityScores?.bestPlatform || 'TBD'}</span>
+                    </span>
+                  </div>
+                  <p className="text-gray-300">{qualityScores?.recommendation || 'No recommendation yet'}</p>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
