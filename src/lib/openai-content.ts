@@ -355,3 +355,150 @@ export async function generateContentPack(options: GenerateOptions): Promise<Ful
 export function isAIConfigured(): boolean {
   return !!AI_API_KEY && AI_API_KEY !== 'dummy_key' && AI_API_KEY !== 'dummy_token';
 }
+
+// ============================================
+// PHASE 3: PRODUCTION PROMPTS
+// Production-ready asset generation
+// ============================================
+
+export interface ProductionPromptOptions {
+  productName: string;
+  productDescription?: string;
+  productPrice?: number;
+  bestHook?: string;
+  bestCaption?: string;
+  bestCta?: string;
+  hashtags?: string;
+}
+
+export interface ProductionPrompts {
+  videoPromptPippit: string;
+  videoPromptVeo: string;
+  videoPromptSeedance: string;
+  videoPromptSora: string;
+  imagePromptThumbnail: string;
+  imagePromptSocial: string;
+  imagePromptCarousel: string;
+  imagePromptAd: string;
+  voiceoverScript: string;
+  subtitleScript: string;
+}
+
+/**
+ * Generate production-ready prompts for video/image creation
+ */
+export async function generateProductionPrompts(options: ProductionPromptOptions): Promise<ProductionPrompts> {
+  // If no AI configured, return defaults
+  if (!AI_API_KEY || AI_API_KEY === 'dummy_key') {
+    return generateDefaultProductionPrompts(options);
+  }
+
+  try {
+    const prompt = `Buatkan production-ready content assets untuk:
+
+PRODUK: ${options.productName}
+${options.productDescription ? `DESKRIPSI: ${options.productDescription}` : ''}
+HARGA: Rp ${(options.productPrice || 0).toLocaleString('id-ID')}
+
+BEST HOOK: ${options.bestHook || 'Hook engaging'}
+BEST CAPTION: ${options.bestCaption || 'Caption persuasif'}
+BEST CTA: ${options.bestCta || 'CTA compelling'}
+
+GENERATE DALAM FORMAT JSON:
+
+{
+  "videoPromptPippit": "Prompt lengkap untuk video Pippit (30 detik, 9:16, momentum tinggi)",
+  "videoPromptVeo": "Prompt untuk Google Veo (45 detik, cinematic)",
+  "videoPromptSeedance": "Prompt untuk ByteDance Seedance (30 detik, viral-worthy)",
+  "videoPromptSora": "Prompt untuk OpenAI Sora (45 detik, premium quality)",
+  "imagePromptThumbnail": "Prompt untuk thumbnail YouTube/TikTok yang menarik",
+  "imagePromptSocial": "Prompt untuk social media post (feed-friendly)",
+  "imagePromptCarousel": "Prompt untuk carousel post (5-10 slides)",
+  "imagePromptAd": "Prompt untuk Facebook/Instagram ad creative",
+  "voiceoverScript": "Script voiceover 30 detik, energetic, engaging",
+  "subtitleScript": "Script subtitle/video text 30 detik, bold, eye-catching"
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: AI_MODEL,
+      messages: [
+        {
+          role: 'system',
+          content: 'Kamu expert video producer dan content creator. Buatkan prompt yang detail dan actionable untuk AI video/image generators.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.85,
+      max_tokens: 4000,
+    });
+
+    const content = completion.choices[0]?.message?.content;
+    if (!content) throw new Error('No prompts generated');
+
+    const parsed = JSON.parse(content);
+    return {
+      videoPromptPippit: parsed.videoPromptPippit || '',
+      videoPromptVeo: parsed.videoPromptVeo || '',
+      videoPromptSeedance: parsed.videoPromptSeedance || '',
+      videoPromptSora: parsed.videoPromptSora || '',
+      imagePromptThumbnail: parsed.imagePromptThumbnail || '',
+      imagePromptSocial: parsed.imagePromptSocial || '',
+      imagePromptCarousel: parsed.imagePromptCarousel || '',
+      imagePromptAd: parsed.imagePromptAd || '',
+      voiceoverScript: parsed.voiceoverScript || '',
+      subtitleScript: parsed.subtitleScript || '',
+    };
+  } catch (error) {
+    console.error('AI production prompts generation failed:', error);
+    return generateDefaultProductionPrompts(options);
+  }
+}
+
+/**
+ * Generate default production prompts
+ */
+function generateDefaultProductionPrompts(options: ProductionPromptOptions): ProductionPrompts {
+  const { productName, productPrice, bestHook, bestCaption, bestCta } = options;
+  const price = (productPrice || 0).toLocaleString('id-ID');
+
+  return {
+    videoPromptPippit: `Video Pippit untuk ${productName}. Hook: ${bestHook || 'Engaging opening'}. Duration: 30 detik. Format: 9:16. Style: energetic, fast-paced, trending audio. CTA: ${bestCta || 'Klik link di bio'}`,
+
+    videoPromptVeo: `Cinematic product video untuk ${productName}. Showcase dengan lighting profesional. Duration: 45 detik. Format: 16:9 atau 9:16. Style: clean, premium, aspirational. Voice over: confident narration.`,
+
+    videoPromptSeedance: `Viral-worthy video untuk ${productName}. Trending transition, engaging hook di detik pertama. Duration: 30 detik. Format: 9:16. Style: trendy, youth-friendly, trending audio. Use hooks: ${bestHook || 'Engaging hook'}`,
+
+    videoPromptSora: `High-quality product video untuk ${productName}. Premium feel, aspirational lifestyle. Duration: 45 detik. Format: 9:16. Style: cinematic, aspirational, high-end. Perfect untuk brand awareness.`,
+
+    imagePromptThumbnail: `Eye-catching thumbnail untuk ${productName}. Bold text, vibrant colors. Price tag visible: Rp ${price}. Style: urgent, exciting, curiosity-driven. Text overlay: promo/price.`,
+
+    imagePromptSocial: `Clean social media post untuk ${productName}. Lifestyle feel, aspirational. Format: square atau landscape. Style: modern, clean, trustworthy. Include product showcase dengan professional lighting.`,
+
+    imagePromptCarousel: `Educational carousel untuk ${productName}. 5-10 slides. Consistent branding. Slide 1: Hook, Slide 2-4: Benefits, Slide 5: Testimonial, Slide 6: Price/Offer, Last: CTA. Style: clean, readable, professional.`,
+
+    imagePromptAd: `High-converting ad creative untuk ${productName}. Clear value proposition, strong CTA. Format: 1:1 atau 4:5. Style: conversion-focused, professional. Elements: product hero, price, urgency, CTA button.`,
+
+    voiceoverScript: `VO SCRIPT (30 DETIK):
+
+[0-3s] HOOK: "${bestHook || 'Tahukah kamu tentang ' + productName + '?'}"
+
+[3-15s] BENEFITS: Ceritakan manfaat utama ${productName}. Harga Rp ${price}.
+
+[15-25s] PROOF: social proof atau testimoni singkat.
+
+[25-30s] CTA: "${bestCta || 'Klik link di bio untuk order sekarang!'}"`,
+
+    subtitleScript: `SUBTITLE/TEXT OVERLAY (30 DETIK):
+
+0-3s: "${bestHook?.substring(0, 50) || 'PERHATIAN!'}"
+3-10s: Key benefits dalam text
+10-15s: Price reveal: Rp ${price}
+15-25s: Social proof atau urgency text
+25-30s: CTA: "${bestCta?.substring(0, 50) || 'ORDER SEKARANG!'}"
+Style: Bold text, high contrast, animated appearance`
+  };
+}

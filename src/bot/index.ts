@@ -1,6 +1,6 @@
 // ============================================
 // AI AFFILIATE DISTRIBUTION ENGINE
-// Telegram Bot - Phase 2 Enhanced
+// Telegram Bot - Phase 3 Enhanced
 // ============================================
 
 import { Telegraf, Markup, Context } from 'telegraf';
@@ -660,6 +660,219 @@ bot.command('reject', async (ctx) => {
   }
 });
 
+// /production - List production packages
+bot.command('production', async (ctx) => {
+  try {
+    const packages = await prisma.productionPackage.findMany({
+      include: {
+        product: true,
+        content: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    if (packages.length === 0) {
+      await ctx.reply('📦 No production packages yet.\n\nUse /production [content_id] to generate one.');
+      return;
+    }
+
+    let text = `📦 *Production Packages (${packages.length})*\n\n`;
+
+    for (const pkg of packages) {
+      const status = pkg.status === 'production_ready' ? '✅' :
+                   pkg.status === 'rendered' ? '🟣' :
+                   pkg.status === 'rendering' ? '⏳' : '⚪';
+
+      text += `${status} *${pkg.product.name}*\n`;
+      text += `   Status: ${pkg.status} | Platform: ${pkg.bestPlatform || 'TBD'}\n`;
+      text += `   ID: \`${pkg.id.substring(0, 8)}...\`\n\n`;
+    }
+
+    text += '\nUse /showpack [id] for details';
+
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+  } catch (error) {
+    await ctx.reply('❌ Error fetching production packages');
+  }
+});
+
+// /showpack [id] - Show production package details
+bot.command('showpack', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    await ctx.reply('📎 Format: /showpack [package_id]\n\nOr tap a package from /production list.');
+    return;
+  }
+
+  try {
+    const pkg = await prisma.productionPackage.findUnique({
+      where: { id: args },
+      include: {
+        product: true,
+        content: true,
+      },
+    });
+
+    if (!pkg) {
+      await ctx.reply('❌ Package not found');
+      return;
+    }
+
+    const hasVideoPrompts = pkg.videoPromptPippit || pkg.videoPromptVeo || pkg.videoPromptSeedance || pkg.videoPromptSora;
+    const hasImagePrompts = pkg.imagePromptThumbnail || pkg.imagePromptSocial || pkg.imagePromptCarousel || pkg.imagePromptAd;
+    const hasScripts = pkg.voiceoverScript || pkg.subtitleScript;
+
+    const detailText = `
+📦 *Production Package*
+
+📦 *Product:* ${pkg.product.name}
+🏪 *Platform:* ${pkg.bestPlatform || 'TBD'}
+📊 *Score:* ${pkg.overallScore}/100
+📈 *Status:* ${pkg.status}
+
+*Video Prompts:* ${hasVideoPrompts ? '✅' : '❌'}
+*Image Prompts:* ${hasImagePrompts ? '✅' : '❌'}
+*Scripts:* ${hasScripts ? '✅' : '❌'}
+
+🆔 ID: \`${pkg.id}\`
+📅 Created: ${new Date(pkg.createdAt).toLocaleString('id-ID')}
+${pkg.exportedAt ? `📤 Exported: ${new Date(pkg.exportedAt).toLocaleString('id-ID')}` : ''}
+
+Best Hook:
+${pkg.content.hook?.substring(0, 100) || 'N/A'}...
+`;
+
+    await ctx.reply(detailText, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Mark Ready', callback_data: `pkg_ready_${pkg.id}` },
+            { text: '🟣 Mark Rendered', callback_data: `pkg_rendered_${pkg.id}` },
+          ],
+          [
+            { text: '🔄 Regenerate', callback_data: `pkg_regen_${pkg.id}` },
+            { text: '📤 Export', callback_data: `pkg_export_${pkg.id}` },
+          ],
+        ]
+      }
+    });
+
+  } catch (error) {
+    await ctx.reply(`❌ Error: ${error}`);
+  }
+});
+
+// /genproduction [content_id] - Generate production package
+bot.command('genproduction', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+
+  if (!args) {
+    // List approved content without packages
+    const approvedContent = await prisma.content.findMany({
+      where: {
+        approvalStatus: 'APPROVED',
+        productionPackages: { none: {} }
+      },
+      include: { product: true },
+      take: 5,
+    });
+
+    if (approvedContent.length === 0) {
+      await ctx.reply('✅ All approved content has production packages, or no approved content yet.');
+      return;
+    }
+
+    let text = '📋 *Approved Content for Production:*\n\n';
+    for (const c of approvedContent) {
+      text += `• ${c.product.name}\n   ID: \`${c.id.substring(0, 8)}...\`\n\n`;
+    }
+    text += '\nUse /genproduction [content_id]';
+
+    await ctx.reply(text, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  await ctx.reply('⏳ Generating production package...');
+
+  try {
+    // Get content
+    const content = await prisma.content.findUnique({
+      where: { id: args },
+      include: { product: true, qualityScores: { take: 1 } },
+    });
+
+    if (!content) {
+      await ctx.reply('❌ Content not found');
+      return;
+    }
+
+    if (content.approvalStatus !== 'APPROVED') {
+      await ctx.reply('❌ Content must be approved first');
+      return;
+    }
+
+    // Generate production prompts
+    const { generateProductionPrompts } = await import('../lib/openai-content');
+
+    const prompts = await generateProductionPrompts({
+      productName: content.product.name,
+      productDescription: content.product.description || '',
+      productPrice: Number(content.product.price),
+      bestHook: content.qualityScores?.[0]?.bestHook || content.hook,
+      bestCaption: content.qualityScores?.[0]?.bestCaption || content.caption,
+      bestCta: content.qualityScores?.[0]?.bestCta || content.cta,
+      hashtags: content.hashtags,
+    });
+
+    // Create production package
+    const pkg = await prisma.productionPackage.create({
+      data: {
+        contentId: content.id,
+        productId: content.productId,
+        status: 'production_ready',
+        bestPlatform: content.qualityScores?.[0]?.bestPlatform || 'TikTok',
+        overallScore: content.qualityScores?.[0]?.overallScore || 0,
+        videoPromptPippit: prompts.videoPromptPippit,
+        videoPromptVeo: prompts.videoPromptVeo,
+        videoPromptSeedance: prompts.videoPromptSeedance,
+        videoPromptSora: prompts.videoPromptSora,
+        imagePromptThumbnail: prompts.imagePromptThumbnail,
+        imagePromptSocial: prompts.imagePromptSocial,
+        imagePromptCarousel: prompts.imagePromptCarousel,
+        imagePromptAd: prompts.imagePromptAd,
+        voiceoverScript: prompts.voiceoverScript,
+        subtitleScript: prompts.subtitleScript,
+      },
+    });
+
+    const successText = `
+✅ *Production Package Generated!*
+
+📦 *Product:* ${content.product.name}
+🏪 *Platform:* ${pkg.bestPlatform}
+📊 *Score:* ${pkg.overallScore}/100
+
+*Included:*
+✅ 4 Video Prompts (Pippit, Veo, Seedance, Sora)
+✅ 4 Image Prompts (Thumbnail, Social, Carousel, Ad)
+✅ Voiceover Script
+✅ Subtitle Script
+
+🆔 Package ID: \`${pkg.id}\`
+
+Use /showpack ${pkg.id} untuk detail lengkap
+`;
+
+    await ctx.reply(successText, { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
 // ============================================
 // CALLBACK HANDLERS
 // ============================================
@@ -704,6 +917,95 @@ bot.on('callback_query', async (ctx) => {
           rejectedAt: new Date(),
           rejectionReason: 'Rejected via Telegram',
         },
+      });
+
+      await ctx.answerCallbackQuery('❌ Rejected!');
+      await ctx.reply('❌ Content rejected.');
+    }
+
+    // Package Ready
+    if (data.startsWith('pkg_ready_')) {
+      const pkgId = data.replace('pkg_ready_', '');
+      await prisma.productionPackage.update({
+        where: { id: pkgId },
+        data: { status: 'production_ready' },
+      });
+      await ctx.answerCallbackQuery('✅ Marked Ready!');
+      await ctx.reply('✅ Package marked as production ready.');
+    }
+
+    // Package Rendered
+    if (data.startsWith('pkg_rendered_')) {
+      const pkgId = data.replace('pkg_rendered_', '');
+      await prisma.productionPackage.update({
+        where: { id: pkgId },
+        data: { status: 'rendered', renderedAt: new Date() },
+      });
+      await ctx.answerCallbackQuery('🟣 Marked Rendered!');
+      await ctx.reply('🟣 Package marked as rendered.');
+    }
+
+    // Package Export
+    if (data.startsWith('pkg_export_')) {
+      const pkgId = data.replace('pkg_export_', '');
+      await ctx.answerCallbackQuery('📤 Exporting...');
+
+      const pkg = await prisma.productionPackage.findUnique({
+        where: { id: pkgId },
+        include: { product: true, content: true },
+      });
+
+      if (pkg) {
+        await prisma.productionPackage.update({
+          where: { id: pkgId },
+          data: { exportedAt: new Date() },
+        });
+
+        await ctx.reply(`📤 *Export Ready!*\n\nProduct: ${pkg.product.name}\nPlatform: ${pkg.bestPlatform}\n\nAll production assets are ready to use.`);
+      }
+    }
+
+    // Package Regenerate
+    if (data.startsWith('pkg_regen_')) {
+      const pkgId = data.replace('pkg_regen_', '');
+      await ctx.answerCallbackQuery('🔄 Regenerating...');
+
+      const existing = await prisma.productionPackage.findUnique({
+        where: { id: pkgId },
+        include: { content: { include: { qualityScores: { take: 1 } } }, product: true },
+      });
+
+      if (existing && existing.content) {
+        const { generateProductionPrompts } = await import('../lib/openai-content');
+
+        const prompts = await generateProductionPrompts({
+          productName: existing.product.name,
+          productDescription: existing.product.description || '',
+          productPrice: Number(existing.product.price),
+          bestHook: existing.content.qualityScores?.[0]?.bestHook || existing.content.hook,
+          bestCaption: existing.content.qualityScores?.[0]?.bestCaption || existing.content.caption,
+          bestCta: existing.content.qualityScores?.[0]?.bestCta || existing.content.cta,
+        });
+
+        await prisma.productionPackage.update({
+          where: { id: pkgId },
+          data: {
+            videoPromptPippit: prompts.videoPromptPippit,
+            videoPromptVeo: prompts.videoPromptVeo,
+            videoPromptSeedance: prompts.videoPromptSeedance,
+            videoPromptSora: prompts.videoPromptSora,
+            imagePromptThumbnail: prompts.imagePromptThumbnail,
+            imagePromptSocial: prompts.imagePromptSocial,
+            imagePromptCarousel: prompts.imagePromptCarousel,
+            imagePromptAd: prompts.imagePromptAd,
+            voiceoverScript: prompts.voiceoverScript,
+            subtitleScript: prompts.subtitleScript,
+          },
+        });
+
+        await ctx.reply('🔄 Production package regenerated!');
+      }
+    }
       });
 
       await ctx.answerCallbackQuery('❌ Rejected!');

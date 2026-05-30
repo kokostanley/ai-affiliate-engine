@@ -40,6 +40,7 @@ model Product {
   scheduledPosts  ScheduledPost[]
   videoPrompts    VideoPrompt[]
   imagePrompts    ImagePrompt[]
+  productionPackages ProductionPackage[]
 
   @@index([status])
   @@index([category])
@@ -147,6 +148,7 @@ model Content {
   videoPrompts   VideoPrompt[] @relation("VideoPrompts")
   imagePrompts   ImagePrompt[] @relation("ImagePrompts")
   qualityScores  QualityScore[] @relation("QualityScores")
+  productionPackages ProductionPackage[]
 
   @@index([productId])
   @@index([contentType])
@@ -386,6 +388,63 @@ model ContentVariant {
 
   @@index([contentId])
   @@index([variantType])
+}
+
+// ============================================
+// PHASE 3: PRODUCTION PACKAGES
+// Production-ready content assets
+// ============================================
+
+model ProductionPackage {
+  id        String   @id @default(cuid())
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+
+  // Status: draft, approved, production_ready, rendering, rendered, failed
+  status    String   @default("draft")
+
+  // Best platform recommendation
+  bestPlatform String?
+
+  // Quality score
+  overallScore Int @default(0)
+
+  // Video Prompts
+  videoPromptPippit    String?
+  videoPromptVeo       String?
+  videoPromptSeedance  String?
+  videoPromptSora      String?
+
+  // Image Prompts
+  imagePromptThumbnail String?
+  imagePromptSocial    String?
+  imagePromptCarousel  String?
+  imagePromptAd        String?
+
+  // Scripts
+  voiceoverScript  String?
+  subtitleScript   String?
+
+  // Export
+  exportPath    String?
+  exportedAt    DateTime?
+  exportFormat  String?   // zip, json
+
+  // Render status
+  renderedAt    DateTime?
+  renderOutput  String?
+
+  errorMessage  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([contentId])
+  @@index([productId])
+  @@index([status])
 }
 
 // ============================================

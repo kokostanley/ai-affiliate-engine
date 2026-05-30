@@ -88,6 +88,10 @@ app.use('/api', apiLimiter);
 import phase2Router from './app/routes/phase2';
 app.use('/api/phase2', phase2Router);
 
+// Import Production routes
+import productionRouter from './app/routes/production';
+app.use('/api/production', productionRouter);
+
 // ============================================
 // HEALTH CHECK
 // ============================================
