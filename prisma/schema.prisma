@@ -1,0 +1,360 @@
+// ============================================
+// AI AFFILIATE DISTRIBUTION ENGINE
+// Database Schema - SQLite for Local Development
+// ============================================
+// Status: v1.0 - Mei 2026
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 1. PRODUCTS TABLE
+// Database produk affiliate
+// ============================================
+
+model Product {
+  id                String    @id @default(cuid())
+  name              String
+  slug              String    @unique
+  category          String
+  price             Float
+  commission        Float
+  commissionAmount  Float
+  affiliatePlatform String
+  affiliateLink     String
+  imageUrl          String?
+  description       String?
+
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  links           Link[]
+  contents        Content[]
+  scheduledPosts  ScheduledPost[]
+
+  @@index([status])
+  @@index([category])
+  @@index([affiliatePlatform])
+}
+
+// ============================================
+// 2. LINKS TABLE
+// Short link & tracking
+// ============================================
+
+model Link {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  originalLink String
+  clicks       Int      @default(0)
+  uniqueClicks Int      @default(0)
+  lastClickedAt DateTime?
+
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clickLogs ClickLog[]
+
+  @@index([slug])
+  @@index([productId])
+  @@index([status])
+}
+
+// ============================================
+// 3. CLICK LOGS TABLE
+// Catatan setiap klik
+// ============================================
+
+model ClickLog {
+  id        String   @id @default(cuid())
+  linkId    String
+  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  ipAddress String?
+  userAgent String?
+  referer   String?
+  country   String?
+  city      String?
+
+  source      String @default("DIRECT")
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmContent  String?
+
+  clickedAt DateTime @default(now())
+
+  @@index([linkId])
+  @@index([source])
+  @@index([clickedAt])
+}
+
+// ============================================
+// 4. CONTENTS TABLE
+// Konten AI yang dihasilkan
+// ============================================
+
+model Content {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  contentType String
+  platform    String
+
+  hook       String?
+  script     String?
+  caption    String?
+  hashtags   String?
+  cta        String?
+  telegramText String?
+  whatsappText String?
+
+  tone     String @default("casual")
+  language String @default("id")
+
+  aiModel       String?
+  tokensUsed    Int      @default(0)
+  generationCost Float?
+
+  status          String @default("DRAFT")
+  approvalStatus String @default("PENDING")
+  approvedAt      DateTime?
+  approvedBy      String?
+  rejectedAt      DateTime?
+  rejectedBy      String?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scheduledPosts ScheduledPost[]
+  approvalLogs   ApprovalLog[]
+
+  @@index([productId])
+  @@index([contentType])
+  @@index([status])
+  @@index([approvalStatus])
+  @@index([platform])
+}
+
+// ============================================
+// 5. APPROVAL LOGS TABLE
+// Log approval Telegram
+// ============================================
+
+model ApprovalLog {
+  id        String   @id @default(cuid())
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  action    String
+  actionBy  String?
+  actionAt  DateTime @default(now())
+  notes     String?
+
+  @@index([contentId])
+}
+
+// ============================================
+// 6. SCHEDULED POSTS TABLE
+// Jadwal posting konten
+// ============================================
+
+model ScheduledPost {
+  id        String   @id @default(cuid())
+
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+
+  platform    String
+  scheduledAt DateTime
+  postedAt    DateTime?
+  status      String @default("SCHEDULED")
+
+  postUrl    String?
+  externalId String?
+
+  views    Int @default(0)
+  likes    Int @default(0)
+  shares   Int @default(0)
+  comments Int @default(0)
+  clicks   Int @default(0)
+
+  errorMessage String?
+  retryCount   Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([platform])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+// ============================================
+// 7. RATE LIMITS TABLE
+// Safety rules - batasi posting
+// ============================================
+
+model RateLimit {
+  id        String   @id @default(cuid())
+  platform  String   @unique
+
+  dailyLimit  Int   @default(3)
+  dailyUsed   Int   @default(0)
+  lastResetAt DateTime @default(now())
+
+  weeklyLimit   Int   @default(15)
+  weeklyUsed    Int   @default(0)
+  weeklyResetAt DateTime @default(now())
+
+  monthlyLimit   Int   @default(50)
+  monthlyUsed    Int   @default(0)
+  monthlyResetAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// 8. ANALYTICS TABLE
+// Aggregated analytics
+// ============================================
+
+model Analytics {
+  id          String   @id @default(cuid())
+  productId   String?
+  platform    String?
+  contentType String?
+
+  period    String
+  dateFrom  DateTime
+  dateTo    DateTime
+
+  totalClicks  Int     @default(0)
+  uniqueClicks Int     @default(0)
+  totalViews   Int     @default(0)
+  totalPosts   Int     @default(0)
+  avgEngagement Float?
+
+  createdAt DateTime @default(now())
+}
+
+// ============================================
+// 9. SETTINGS TABLE
+// Konfigurasi sistem
+// ============================================
+
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================
+// 10. AUDIT LOGS TABLE
+// Log semua aktivitas untuk audit
+// ============================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  oldValue   String?
+  newValue   String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ============================================
+// 11. API KEYS TABLE
+// API keys untuk integrasi
+// ============================================
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  name        String
+  key         String   @unique @default(cuid())
+  permissions String?
+  restrictions String?
+
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  status     String  @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// ============================================
+// 12. TELEGRAM USER SESSIONS
+// Session Telegram bot
+// ============================================
+
+model TelegramSession {
+  id         String   @id @default(cuid())
+  telegramId String   @unique
+  username   String?
+  firstName  String?
+  lastName   String?
+
+  state     String @default("START")
+  stateData String?
+
+  isAdmin    Boolean @default(false)
+  isApproved Boolean @default(false)
+
+  approvedCount Int @default(0)
+  rejectedCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([telegramId])
+}
+
+// ============================================
+// 13. WEBHOOK LOGS
+// Log dari webhooks
+// ============================================
+
+model WebhookLog {
+  id        String   @id @default(cuid())
+  source    String
+  eventType String
+  payload   String
+  processed Boolean  @default(false)
+  processedAt DateTime?
+  error     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([source])
+  @@index([processed])
+}

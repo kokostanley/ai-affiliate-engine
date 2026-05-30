@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "outDir": "./dist/api"
+  },
+  "include": ["src/app/**/*", "src/lib/**/*", "src/middleware/**/*", "src/validators/**/*", "src/services/**/*"],
+  "exclude": ["node_modules", "dist", "src/bot/**/*", "src/workers/**/*"]
+}
