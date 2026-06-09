@@ -139,8 +139,8 @@ app.get('/api/health', (req, res) => {
 // ============================================
 
 app.use('/api/products', productsRouter);
+app.use('/api/links/tracking', linksTrackingRouter); // Must be before /api/links
 app.use('/api/links', linksRouter);
-app.use('/api/links/tracking', linksTrackingRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/scheduler', schedulerRouter);

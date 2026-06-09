@@ -12,6 +12,8 @@ const router = Router();
 // List all tracked links with filters
 // ============================================
 router.get('/', async (req, res) => {
+  console.log('[LinkTracking API] Request received for /api/links/tracking');
+
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
@@ -22,6 +24,8 @@ router.get('/', async (req, res) => {
     const status = req.query.status as string;
     const stage = req.query.stage as linkTracking.PipelineStage;
 
+    console.log('[LinkTracking API] Calling getAllLinks with:', { brandId, platform, status, stage, limit, skip });
+
     const result = await linkTracking.getAllLinks({
       brandId,
       platform,
@@ -30,6 +34,8 @@ router.get('/', async (req, res) => {
       limit,
       offset: skip,
     });
+
+    console.log('[LinkTracking API] getAllLinks returned:', result.total, 'links');
 
     res.json({
       success: true,
@@ -41,11 +47,11 @@ router.get('/', async (req, res) => {
         totalPages: Math.ceil(result.total / limit),
       },
     });
-  } catch (error) {
-    console.error('[LinkTracking API] Error listing links:', error);
+  } catch (error: any) {
+    console.error('[LinkTracking API] Error listing links:', error.message, error.stack);
     res.status(500).json({
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch tracking links' },
+      error: { code: 'INTERNAL_ERROR', message: error.message || 'Failed to fetch tracking links' },
     });
   }
 });

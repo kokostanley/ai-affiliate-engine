@@ -30,6 +30,7 @@ model Product {
   videoPrompts       VideoPrompt[]
   imagePrompts       ImagePrompt[]
   productionPackages ProductionPackage[]
+  affiliateLinkTracking AffiliateLinkTracking[]
 
   @@index([status])
   @@index([category])
@@ -97,6 +98,7 @@ model Content {
   imagePrompts       ImagePrompt[]
   qualityScores      QualityScore[]
   productionPackages ProductionPackage[]
+  affiliateLinkTracking AffiliateLinkTracking[]
 
   @@index([approvalStatus])
   @@index([platform])
@@ -410,6 +412,7 @@ model Brand {
   zernioConfigs     ZernioConfig[]
   socialAccounts    SocialAccount[]
   distributionQueue DistributionQueue[]
+  affiliateLinkTracking AffiliateLinkTracking[]
 
   @@index([status])
   @@index([slug])
@@ -535,6 +538,9 @@ model DistributionQueue {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Relations
+  affiliateLinkTracking AffiliateLinkTracking[]
+
   @@index([brandId])
   @@index([status])
   @@index([approvalStatus])
@@ -651,10 +657,14 @@ model AffiliateLinkTracking {
 
   // Core references
   productId       String?
+  product         Product?  @relation(fields: [productId], references: [id])
   contentId       String?
+  content         Content?  @relation(fields: [contentId], references: [id])
   distributionId  String?
+  distribution    DistributionQueue? @relation(fields: [distributionId], references: [id])
   brandId         String?
-  
+  brand           Brand?   @relation(fields: [brandId], references: [id])
+
   // Link information
   originalLink    String
   trackingLink    String?
@@ -666,7 +676,7 @@ model AffiliateLinkTracking {
   // Pipeline stage
   currentPipelineStage String @default("PRODUCT_CREATED")
   // Stages: PRODUCT_CREATED | CONTENT_GENERATED | APPROVED | DISTRIBUTED | POSTED | ACTIVE | PAUSED | EXPIRED
-  
+
   // Pipeline history (JSON array of stage changes)
   pipelineHistory String @default("[]")
   // Format: [{"stage": "PRODUCT_CREATED", "timestamp": "2024-01-01T00:00:00Z", "note": "..."}]

@@ -566,7 +566,7 @@ export async function getAllLinks(options?: {
  * Get tracking by short code
  */
 export async function getTrackingByShortCode(shortCode: string): Promise<TrackedLink | null> {
-  const tracking = await prisma.affiliateLinkTracking.findUnique({
+  const tracking = await prisma.affiliateLinkTracking.findFirst({
     where: { shortCode },
     include: {
       product: {
