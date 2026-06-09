@@ -1,13 +1,15 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Plus, Copy, ExternalLink, MousePointerClick, 
-  TrendingUp, Users, ShoppingCart, DollarSign, Pause, Play, 
+import {
+  Plus, Copy, ExternalLink, MousePointerClick,
+  TrendingUp, Users, ShoppingCart, DollarSign, Pause, Play,
   ChevronDown, ChevronUp, RefreshCw
 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/Button';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
 
 interface TrackedLink {
   id: string;
@@ -48,7 +50,7 @@ export default function LinksPage() {
   const fetchLinks = async () => {
     try {
       setLoading(true);
-      let url = '/api/links/tracking?limit=100';
+      let url = API_BASE + '/api/links/tracking?limit=100';
       if (filterPlatform) url += '&platform=' + filterPlatform;
       if (filterStatus) url += '&status=' + filterStatus;
       const res = await fetch(url);
@@ -63,7 +65,7 @@ export default function LinksPage() {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch('/api/links/tracking/stats');
+      const res = await fetch(API_BASE + '/api/links/tracking/stats');
       const data = await res.json();
       if (data.success) setStats(data.data);
     } catch (error) {
@@ -72,7 +74,7 @@ export default function LinksPage() {
   };
 
   const handlePause = async (id: string) => {
-    await fetch('/api/links/tracking/' + id, {
+    await fetch(API_BASE + '/api/links/tracking/' + id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'pause' }),
@@ -82,7 +84,7 @@ export default function LinksPage() {
   };
 
   const handleActivate = async (id: string) => {
-    await fetch('/api/links/tracking/' + id, {
+    await fetch(API_BASE + '/api/links/tracking/' + id, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'activate' }),
