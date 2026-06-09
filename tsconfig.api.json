@@ -2,8 +2,9 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "CommonJS",
+    "moduleResolution": "node",
     "outDir": "./dist/api"
   },
   "include": ["src/app/**/*", "src/lib/**/*", "src/middleware/**/*", "src/validators/**/*", "src/services/**/*"],
-  "exclude": ["node_modules", "dist", "src/bot/**/*", "src/workers/**/*"]
+  "exclude": ["node_modules", "dist", "src/bot/**/*", "src/workers/**/*", "src/pages/**/*", "src/app/**/*/page.tsx", "src/app/**/*/layout.tsx"]
 }

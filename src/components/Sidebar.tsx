@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { cn } from '@/lib/utils';
+import { useBrand } from '@/contexts/BrandContext';
+import { ChevronDown } from 'lucide-react';
+import { useState } from 'react';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
@@ -15,6 +17,13 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { selectedBrand, setSelectedBrand, brands, isLoading } = useBrand();
+  const [isBrandMenuOpen, setIsBrandMenuOpen] = useState(false);
+
+  const handleBrandSelect = (brand: { id: string; name: string; slug: string }) => {
+    setSelectedBrand(brand);
+    setIsBrandMenuOpen(false);
+  };
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 bg-[#0f172a] border-r border-gray-800">
@@ -26,6 +35,51 @@ export function Sidebar() {
           </h1>
         </div>
 
+        {/* Brand Selector */}
+        <div className="border-b border-gray-800 px-3 py-3">
+          <div className="relative">
+            <button
+              onClick={() => setIsBrandMenuOpen(!isBrandMenuOpen)}
+              className="flex w-full items-center justify-between rounded-lg bg-gray-800 px-3 py-2 text-sm text-white hover:bg-gray-700"
+              disabled={isLoading}
+            >
+              <span className="flex items-center gap-2">
+                <span className="text-orange-500">🏢</span>
+                {selectedBrand ? selectedBrand.name : 'Select Brand'}
+              </span>
+              <ChevronDown className={`h-4 w-4 transition-transform ${isBrandMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isBrandMenuOpen && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg bg-gray-800 shadow-lg">
+                {brands.map((brand) => (
+                  <button
+                    key={brand.id}
+                    onClick={() => handleBrandSelect(brand)}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-sm text-left hover:bg-gray-700 ${
+                      selectedBrand?.id === brand.id ? 'bg-blue-600/20 text-blue-400' : 'text-white'
+                    }`}
+                  >
+                    <span className="text-gray-400">•</span>
+                    {brand.name}
+                    {selectedBrand?.id === brand.id && (
+                      <span className="ml-auto text-xs text-green-400">✓</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Click outside to close */}
+          {isBrandMenuOpen && (
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setIsBrandMenuOpen(false)}
+            />
+          )}
+        </div>
+
         {/* Navigation */}
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navItems.map((item) => {
@@ -34,12 +88,11 @@ export function Sidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-blue-600 text-white'
                     : 'text-gray-400 hover:bg-gray-800 hover:text-white'
-                )}
+                }`}
               >
                 <svg
                   className="h-5 w-5 flex-shrink-0"

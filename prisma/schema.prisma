@@ -1,8 +1,4 @@
-// ============================================
-// AI AFFILIATE DISTRIBUTION ENGINE
-// Database Schema - SQLite for Local Development
-// ============================================
-// Status: v1.0 - Mei 2026
+// AI AFFILIATE ENGINE DATABASE SCHEMA
 
 generator client {
   provider = "prisma-client-js"
@@ -13,33 +9,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================
-// 1. PRODUCTS TABLE
-// Database produk affiliate
-// ============================================
-
 model Product {
-  id                String    @id @default(cuid())
-  name              String
-  slug              String    @unique
-  category          String
-  price             Float
-  commission        Float
-  commissionAmount  Float
-  affiliatePlatform String
-  affiliateLink     String
-  imageUrl          String?
-  description       String?
-
-  status    String   @default("ACTIVE")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  links           Link[]
-  contents        Content[]
-  scheduledPosts  ScheduledPost[]
-  videoPrompts    VideoPrompt[]
-  imagePrompts    ImagePrompt[]
+  id                 String              @id @default(cuid())
+  name               String
+  slug               String              @unique
+  category           String
+  price              Float
+  commission         Float
+  commissionAmount   Float
+  affiliatePlatform  String
+  affiliateLink      String
+  imageUrl           String?
+  description        String?
+  status             String              @default("ACTIVE")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  links              Link[]
+  contents           Content[]
+  scheduledPosts     ScheduledPost[]
+  videoPrompts       VideoPrompt[]
+  imagePrompts       ImagePrompt[]
   productionPackages ProductionPackage[]
 
   @@index([status])
@@ -47,552 +36,706 @@ model Product {
   @@index([affiliatePlatform])
 }
 
-// ============================================
-// 2. LINKS TABLE
-// Short link & tracking
-// ============================================
-
 model Link {
-  id          String   @id @default(cuid())
-  slug        String   @unique
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-
-  originalLink String
-  clicks       Int      @default(0)
-  uniqueClicks Int      @default(0)
+  id            String     @id @default(cuid())
+  slug          String     @unique
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id])
+  originalLink  String
+  clicks        Int        @default(0)
+  uniqueClicks  Int        @default(0)
   lastClickedAt DateTime?
-
-  status    String   @default("ACTIVE")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  clickLogs ClickLog[]
+  status        String     @default("ACTIVE")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  clickLogs     ClickLog[]
 
   @@index([slug])
   @@index([productId])
   @@index([status])
 }
 
-// ============================================
-// 3. CLICK LOGS TABLE
-// Catatan setiap klik
-// ============================================
-
 model ClickLog {
-  id        String   @id @default(cuid())
-  linkId    String
-  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
-
-  ipAddress String?
-  userAgent String?
-  referer   String?
-  country   String?
-  city      String?
-
-  source      String @default("DIRECT")
-  utmSource   String?
-  utmMedium   String?
+  id          String   @id @default(cuid())
+  linkId      String
+  link        Link     @relation(fields: [linkId], references: [id])
+  ipAddress   String?
+  userAgent   String?
+  source      String   @default("DIRECT")
   utmCampaign String?
-  utmContent  String?
+  clickedAt   DateTime @default(now())
 
-  clickedAt DateTime @default(now())
-
-  @@index([linkId])
-  @@index([source])
   @@index([clickedAt])
 }
 
+model Content {
+  id                 String              @id @default(cuid())
+  productId          String
+  product            Product             @relation(fields: [productId], references: [id])
+  contentType        String
+  platform           String
+  status             String              @default("DRAFT")
+  hook               String?
+  caption            String?
+  script             String?
+  hashtags           String?
+  cta                String?
+  telegramText       String?
+  whatsappText       String?
+  tone               String              @default("casual")
+  language           String              @default("id")
+  approvalStatus     String              @default("PENDING")
+  approvedAt         DateTime?
+  rejectedAt         DateTime?
+  rejectionReason    String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  scheduledPosts     ScheduledPost[]
+  approvalLogs       ApprovalLog[]
+  contentVariants    ContentVariant[]
+  videoPrompts       VideoPrompt[]
+  imagePrompts       ImagePrompt[]
+  qualityScores      QualityScore[]
+  productionPackages ProductionPackage[]
+
+  @@index([approvalStatus])
+  @@index([platform])
+}
+
+model ApprovalLog {
+  id        String   @id @default(cuid())
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id])
+  action    String
+  actionAt  DateTime @default(now())
+  notes     String?
+}
+
+model ScheduledPost {
+  productId   String?
+  product     Product?  @relation(fields: [productId], references: [id])
+  id          String    @id @default(cuid())
+  contentId   String
+  content     Content   @relation(fields: [contentId], references: [id])
+  platform    String
+  scheduledAt DateTime
+  postedAt    DateTime?
+  status      String    @default("SCHEDULED")
+  createdAt   DateTime  @default(now())
+
+  @@index([status])
+  @@index([scheduledAt])
+}
+
 // ============================================
-// 4. CONTENTS TABLE
-// Konten AI yang dihasilkan
+// CONTENT CALENDAR AUTOMATION
 // ============================================
 
-model Content {
+model PostingSchedule {
+  id          String   @id @default(cuid())
+  brandId     String?
+  platform    String   // TIKTOK, INSTAGRAM, FACEBOOK
+  dayOfWeek   Int      // 0=Sunday, 1=Monday, ..., 6=Saturday
+  hour        Int      // 0-23
+  minute      Int      // 0-59
+  contentType String   // IMAGE, CAROUSEL, VIDEO
+  maxPosts    Int      @default(1) // Max posts per slot
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([platform])
+  @@index([dayOfWeek])
+  @@index([isActive])
+}
+
+model ContentQueue {
+  id           String    @id @default(cuid())
+  brandId      String?
+  contentId    String
+  distributionId String? // Links to DistributionQueue
+  contentType  String    // IMAGE, CAROUSEL, VIDEO
+  platform     String
+  priority     Int       @default(0) // Higher = more priority
+  status       String    @default("PENDING") // PENDING, SCHEDULED, POSTED, SKIPPED
+  scheduledFor DateTime? // When to schedule in Zernio
+  postedAt     DateTime?
+  error        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([brandId])
+}
+
+model ContentVariant {
+  id           String   @id @default(cuid())
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id])
+  variantType  String
+  variantIndex Int
+  contentValue String
+  createdAt    DateTime @default(now())
+
+  @@index([contentId])
+  @@index([variantType])
+}
+
+model VideoPrompt {
   id        String   @id @default(cuid())
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id])
+  contentId String?
+  content   Content? @relation(fields: [contentId], references: [id])
+  tool      String
+  prompt    String
+  duration  Int?
+  format    String?
+  hook      String?
+  voiceOver String?
+  status    String   @default("DRAFT")
+  createdAt DateTime @default(now())
 
-  contentType String
-  platform    String
+  @@index([tool])
+  @@index([status])
+}
 
-  hook       String?
-  script     String?
-  caption    String?
-  hashtags   String?
-  cta        String?
-  telegramText String?
-  whatsappText String?
+model ImagePrompt {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  contentId  String?
+  content    Content? @relation(fields: [contentId], references: [id])
+  imageType  String
+  prompt     String
+  layout     String?
+  background String?
+  visualMood String?
+  status     String   @default("DRAFT")
+  createdAt  DateTime @default(now())
 
-  tone     String @default("casual")
-  language String @default("id")
+  @@index([imageType])
+  @@index([status])
+}
 
-  aiModel       String?
-  tokensUsed    Int      @default(0)
-  generationCost Float?
+model QualityScore {
+  id           String   @id @default(cuid())
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id])
+  hookScore    Int      @default(0)
+  overallScore Int      @default(0)
+  bestPlatform String?
+  bestHook String?
+  bestCaption String?
+  bestCta String?
+  clarityScore Int?
+  conversionScore Int?
+  platformFitScore Int?
+  recommendation String?
+  shouldPost   Boolean  @default(false)
+  createdAt    DateTime @default(now())
 
-  status          String @default("DRAFT")
-  approvalStatus String @default("PENDING")
+  @@index([overallScore])
+}
+
+model ProductionPackage {
+  id                   String      @id @default(cuid())
+  contentId            String
+  content              Content     @relation(fields: [contentId], references: [id])
+  productId            String
+  product              Product     @relation(fields: [productId], references: [id])
+  status               String      @default("draft")
+  bestPlatform         String?
+  overallScore         Int         @default(0)
+  videoPromptPippit    String?
+  videoPromptVeo       String?
+  videoPromptSeedance  String?
+  videoPromptSora      String?
+  imagePromptThumbnail String?
+  imagePromptSocial    String?
+  imagePromptCarousel  String?
+  imagePromptAd        String?
+  voiceoverScript      String?
+  subtitleScript       String?
+  exportedAt           DateTime?
+  renderedAt           DateTime?
+  errorMessage         String?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  renderJobs           RenderJob[]
+
+  @@index([status])
+}
+
+model RenderJob {
+  id                  String            @id @default(cuid())
+  productionPackageId String
+  productionPackage   ProductionPackage @relation(fields: [productionPackageId], references: [id])
+  jobType             String
+  tool                String
+  status              String            @default("queued")
+  prompt              String
+  outputUrl           String?
+  thumbnailUrl        String?
+  duration            Int?
+  format              String?
+  size                String?
+  providerJobId       String?
+  startedAt           DateTime?
+  completedAt         DateTime?
+  errorMessage        String?
+  retryCount          Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@index([status])
+  @@index([tool])
+}
+
+model AssetFile {
+  id             String    @id @default(cuid())
+  productId      String?
+  packageId      String?
+  renderJobId    String?
+  fileType       String
+  fileName       String
+  provider       String              // Render provider: PIPPIT, VEO, DALL_E, etc.
+  cloudProvider  String?             // Storage provider: GOOGLE_DRIVE, DROPBOX, LOCAL
+  cloudUrl       String?
+  cloudFileId    String?
+  cloudFolderId  String?
+  cloudPath      String?
+  localPath      String?
+  fileSize       BigInt?
+  localSize      BigInt?
+  localCachedAt  DateTime?
+  uploadStatus   String    @default("pending")  // pending | uploading | uploaded | failed
+  uploadRetryCount Int      @default(0)
+  uploadError    String?
+  contentHash    String?
+  mimeType       String?
+  uploadedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([productId])
+  @@index([uploadStatus])
+  @@index([cloudProvider])
+  @@index([fileType])
+}
+
+model RateLimit {
+  id          String   @id @default(cuid())
+  platform    String   @unique
+  dailyLimit  Int      @default(3)
+  dailyUsed   Int      @default(0)
+  lastResetAt DateTime @default(now())
+}
+
+model Analytics {
+  id          String   @id @default(cuid())
+  period      String
+  dateFrom    DateTime
+  dateTo      DateTime
+  totalClicks Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String
+  entityType String
+  entityId   String?
+  createdAt  DateTime @default(now())
+}
+
+model ApiKey {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  expiresAt DateTime?
+  status    String    @default("ACTIVE")
+  createdAt DateTime  @default(now())
+}
+
+model TelegramSession {
+  id         String   @id @default(cuid())
+  telegramId String   @unique
+  username String?
+  firstName String?
+  lastName String?
+  state      String   @default("START")
+  stateData String?
+  isAdmin    Boolean  @default(false)
+  isApproved Boolean  @default(false)
+  activeBrandId    String?
+  activeBrandSlug  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([activeBrandId])
+}
+
+model WebhookLog {
+  id          String    @id @default(cuid())
+  source      String
+  eventType   String
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+// ============================================
+// PHASE 5: BRAND + ZERNIO DISTRIBUTION ENGINE
+// ============================================
+
+model Brand {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  logo        String?
+  status      String   @default("ACTIVE") // ACTIVE, PAUSED, INACTIVE
+  settings    String? // JSON for brand-specific settings
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  zernioConfigs     ZernioConfig[]
+  socialAccounts    SocialAccount[]
+  distributionQueue DistributionQueue[]
+
+  @@index([status])
+  @@index([slug])
+}
+
+model ZernioConfig {
+  id           String    @id @default(cuid())
+  brandId      String
+  brand        Brand     @relation(fields: [brandId], references: [id])
+  name         String // e.g., "Zernio Key 1", "Zernio Key 2"
+  apiKey       String
+  accountLimit Int       @default(10) // Max accounts per key
+  isActive     Boolean   @default(true)
+  lastUsedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([brandId, name])
+  @@index([brandId])
+  @@index([isActive])
+}
+
+model SocialAccount {
+  id              String    @id @default(cuid())
+  brandId         String
+  brand           Brand     @relation(fields: [brandId], references: [id])
+  platform        String // TIKTOK, INSTAGRAM, FACEBOOK, YOUTUBE
+  accountId       String // Platform's account ID
+  accountName     String // Display name
+  accountUsername String? // @username
+  avatarUrl       String?
+  followers       Int       @default(0)
+  status          String    @default("ACTIVE") // ACTIVE, PAUSED, INACTIVE
+  dailyLimit      Int       @default(3) // Max posts per day
+  dailyUsed       Int       @default(0) // Posts today
+  cooldownMinutes Int       @default(60) // Min minutes between posts
+  lastPostedAt    DateTime?
+  priority        Int       @default(0) // Higher = more priority
+  zernioConfigId  String? // Assigned Zernio config
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([brandId, platform, accountId])
+  @@index([brandId])
+  @@index([platform])
+  @@index([status])
+}
+
+model DistributionQueue {
+  id          String  @id @default(cuid())
+  brandId     String
+  brand       Brand   @relation(fields: [brandId], references: [id])
+  assetFileId String? // Reference to AssetFile
+  productId   String? // Reference to Product
+
+  // Content
+  videoUrl     String?
+  thumbnailUrl String?
+  caption      String?
+  hashtags     String?
+  script       String?
+  voiceoverUrl String?
+
+  // Metadata
+  contentType String // VIDEO, IMAGE, CAROUSEL
+  platform    String // TIKTOK, INSTAGRAM, FACEBOOK, YOUTUBE
+
+  // Routing
+  socialAccountId String? // Assigned social account
+  zernioConfigId  String? // Zernio config used
+
+  // Status
+  status   String @default("DRAFT") // DRAFT, READY, QUEUED, POSTING, POSTED, FAILED, CANCELLED
+  provider String // PIPPIT_MANUAL, HIGGSFIELD_AUTO, DALL_E, etc.
+
+  // Scheduling
+  scheduledAt DateTime?
+  postedAt    DateTime?
+
+  // Results
+  postUrl  String? // URL of posted content
+  postId   String? // Platform's post ID
+  views    Int     @default(0)
+  likes    Int     @default(0)
+  comments Int     @default(0)
+  shares   Int     @default(0)
+
+  // Revenue Tracking
+  clicks Int     @default(0)
+  uniqueClicks  Int     @default(0)
+  leads         Int     @default(0)
+  sales         Int     @default(0)
+  conversionRate Float @default(0)
+  revenue Float   @default(0)
+  commission     Float   @default(0)
+  estimatedCommission Float @default(0)
+
+  // Affiliate Link
+  affiliateLink String?
+  trackingLink   String?
+
+  // Link Placement Strategy (platform-specific)
+  linkPlacementType     String?  // BIO_LINK, STORY_STICKER, COMMENT, DIRECT, PINNED_COMMENT, BIO_PLUS_CTA, NO_LINK
+  linkPlacementText     String?  // CTA text for caption (e.g., "Link ada di bio")
+  bioLinkRequired        Boolean @default(false)
+  manualActionRequired   Boolean @default(false)
+  manualActionNote       String?  // Note for manual action (e.g., "Need to add story sticker")
+  destinationUrl         String?  // Final destination URL
+  pinnedCommentText      String?  // Text for pinned comment (YouTube)
+
+  // Approval
+  approvalStatus  String    @default("PENDING") // PENDING, APPROVED, REJECTED
   approvedAt      DateTime?
   approvedBy      String?
   rejectedAt      DateTime?
   rejectedBy      String?
   rejectionReason String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  scheduledPosts ScheduledPost[]
-  approvalLogs   ApprovalLog[]
-  contentVariants ContentVariant[] @relation("ContentVariants")
-  videoPrompts   VideoPrompt[] @relation("VideoPrompts")
-  imagePrompts   ImagePrompt[] @relation("ImagePrompts")
-  qualityScores  QualityScore[] @relation("QualityScores")
-  productionPackages ProductionPackage[]
-
-  @@index([productId])
-  @@index([contentType])
-  @@index([status])
-  @@index([approvalStatus])
-  @@index([platform])
-}
-
-// ============================================
-// 5. APPROVAL LOGS TABLE
-// Log approval Telegram
-// ============================================
-
-model ApprovalLog {
-  id        String   @id @default(cuid())
-  contentId String
-  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
-
-  action    String
-  actionBy  String?
-  actionAt  DateTime @default(now())
-  notes     String?
-
-  @@index([contentId])
-}
-
-// ============================================
-// 6. SCHEDULED POSTS TABLE
-// Jadwal posting konten
-// ============================================
-
-model ScheduledPost {
-  id        String   @id @default(cuid())
-
-  contentId String
-  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product  @relation(fields: [productId], references: [id])
-
-  platform    String
-  scheduledAt DateTime
-  postedAt    DateTime?
-  status      String @default("SCHEDULED")
-
-  postUrl    String?
-  externalId String?
-
-  views    Int @default(0)
-  likes    Int @default(0)
-  shares   Int @default(0)
-  comments Int @default(0)
-  clicks   Int @default(0)
-
-  errorMessage String?
-  retryCount   Int @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([platform])
-  @@index([status])
-  @@index([scheduledAt])
-}
-
-// ============================================
-// 7. RATE LIMITS TABLE
-// Safety rules - batasi posting
-// ============================================
-
-model RateLimit {
-  id        String   @id @default(cuid())
-  platform  String   @unique
-
-  dailyLimit  Int   @default(3)
-  dailyUsed   Int   @default(0)
-  lastResetAt DateTime @default(now())
-
-  weeklyLimit   Int   @default(15)
-  weeklyUsed    Int   @default(0)
-  weeklyResetAt DateTime @default(now())
-
-  monthlyLimit   Int   @default(50)
-  monthlyUsed    Int   @default(0)
-  monthlyResetAt DateTime @default(now())
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// ============================================
-// 8. ANALYTICS TABLE
-// Aggregated analytics
-// ============================================
-
-model Analytics {
-  id          String   @id @default(cuid())
-  productId   String?
-  platform    String?
-  contentType String?
-
-  period    String
-  dateFrom  DateTime
-  dateTo    DateTime
-
-  totalClicks  Int     @default(0)
-  uniqueClicks Int     @default(0)
-  totalViews   Int     @default(0)
-  totalPosts   Int     @default(0)
-  avgEngagement Float?
-
-  createdAt DateTime @default(now())
-}
-
-// ============================================
-// 9. SETTINGS TABLE
-// Konfigurasi sistem
-// ============================================
-
-model Setting {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  value       String
-  description String?
-  updatedAt   DateTime @updatedAt
-}
-
-// ============================================
-// 10. AUDIT LOGS TABLE
-// Log semua aktivitas untuk audit
-// ============================================
-
-model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  action     String
-  entityType String
-  entityId   String?
-  oldValue   String?
-  newValue   String?
-  ipAddress  String?
-  userAgent  String?
-  createdAt  DateTime @default(now())
-
-  @@index([userId])
-  @@index([action])
-  @@index([entityType, entityId])
-  @@index([createdAt])
-}
-
-// ============================================
-// 11. API KEYS TABLE
-// API keys untuk integrasi
-// ============================================
-
-model ApiKey {
-  id          String   @id @default(cuid())
-  name        String
-  key         String   @unique @default(cuid())
-  permissions String?
-  restrictions String?
-
-  lastUsedAt DateTime?
-  expiresAt  DateTime?
-  status     String  @default("ACTIVE")
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([key])
-}
-
-// ============================================
-// 12. TELEGRAM USER SESSIONS
-// Session Telegram bot
-// ============================================
-
-model TelegramSession {
-  id         String   @id @default(cuid())
-  telegramId String   @unique
-  username   String?
-  firstName  String?
-  lastName   String?
-
-  state     String @default("START")
-  stateData String?
-
-  isAdmin    Boolean @default(false)
-  isApproved Boolean @default(false)
-
-  approvedCount Int @default(0)
-  rejectedCount Int @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([telegramId])
-}
-
-// ============================================
-// 13. WEBHOOK LOGS
-// Log dari webhooks
-// ============================================
-
-model WebhookLog {
-  id        String   @id @default(cuid())
-  source    String
-  eventType String
-  payload   String
-  processed Boolean  @default(false)
-  processedAt DateTime?
-  error     String?
-
-  createdAt DateTime @default(now())
-
-  @@index([source])
-  @@index([processed])
-}
-
-// ============================================
-// PHASE 2: CONTENT VARIANTS
-// Generated content variations per product
-// ============================================
-
-model ContentVariant {
-  id          String   @id @default(cuid())
-  contentId   String
-  content     Content  @relation("ContentVariants", fields: [contentId], references: [id], onDelete: Cascade)
-
-  variantType String   // HOOK, CAPTION, CTA, HASHTAG, SCRIPT, ANGLE
-  variantIndex Int     // 1-20 for hooks, 1-10 for captions, etc.
-
-  contentValue String
-
-  qualityScore Int?    // 1-100
-
-  createdAt DateTime @default(now())
-
-  @@index([contentId])
-  @@index([variantType])
-}
-
-// ============================================
-// PHASE 3: PRODUCTION PACKAGES
-// Production-ready content assets
-// ============================================
-
-model ProductionPackage {
-  id        String   @id @default(cuid())
-  contentId String
-  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
-
-  productId String
-  product   Product  @relation(fields: [productId], references: [id])
-
-  // Status: draft, approved, production_ready, rendering, rendered, failed
-  status    String   @default("draft")
-
-  // Best platform recommendation
-  bestPlatform String?
-
-  // Quality score
-  overallScore Int @default(0)
-
-  // Video Prompts
-  videoPromptPippit    String?
-  videoPromptVeo       String?
-  videoPromptSeedance  String?
-  videoPromptSora      String?
-
-  // Image Prompts
-  imagePromptThumbnail String?
-  imagePromptSocial    String?
-  imagePromptCarousel  String?
-  imagePromptAd        String?
-
-  // Scripts
-  voiceoverScript  String?
-  subtitleScript   String?
-
-  // Export
-  exportPath    String?
-  exportedAt    DateTime?
-  exportFormat  String?   // zip, json
-
-  // Render status
-  renderedAt    DateTime?
-  renderOutput  String?
-
-  errorMessage  String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([contentId])
-  @@index([productId])
-  @@index([status])
-
-  renderJobs RenderJob[]
-}
-
-// ============================================
-// PHASE 4: RENDERING QUEUE
-// Video/Image rendering jobs
-// ============================================
-
-model RenderJob {
-  id        String   @id @default(cuid())
-  productionPackageId String
-  productionPackage ProductionPackage @relation(fields: [productionPackageId], references: [id], onDelete: Cascade)
-
-  // Job type
-  jobType   String   // VIDEO, IMAGE
-  tool      String   // PIPPIT, VEO, SEEDANCE, SORA, DALL_E, MIDJOURNEY, STABLE_DIFFUSION
-
-  // Status: queued, processing, completed, failed
-  status   String   @default("queued")
-
-  // Prompt used
-  prompt   String
-
-  // Output
-  outputUrl   String?
-  outputType   String?  // video, image
-  thumbnailUrl String?
-
-  // Metadata
-  duration Int?    // seconds for video
-  format   String?
-  size     String?
-
-  // Provider API info
-  providerJobId String?
-  provider       String?
-
-  // Timing
-  queuedAt    DateTime @default(now())
-  startedAt   DateTime?
-  completedAt DateTime?
-
   // Error handling
   errorMessage String?
-  retryCount   Int @default(0)
-
-  // Cost tracking
-  costEstimate Float?
+  retryCount   Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([productionPackageId])
+  @@index([brandId])
   @@index([status])
-  @@index([tool])
-  @@index([providerJobId])
+  @@index([approvalStatus])
+  @@index([scheduledAt])
+  @@index([platform])
+}
+
+model PostingLog {
+  id              String   @id @default(cuid())
+  socialAccountId String
+  distributionId  String
+  platform        String
+  status          String // SUCCESS, FAILED
+  postUrl         String?
+  errorMessage    String?
+  postedAt        DateTime @default(now())
+
+  @@index([socialAccountId])
+  @@index([postedAt])
 }
 
 // ============================================
-// PHASE 2: VIDEO PROMPTS
-// AI prompts for video generation
+// REVENUE TRACKING MODELS
 // ============================================
 
-model VideoPrompt {
-  id        String   @id @default(cuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  contentId String?
-  content   Content? @relation("VideoPrompts", fields: [contentId], references: [id], onDelete: SetNull)
+model RevenueEvent {
+  id              String   @id @default(cuid())
+  distributionId String
+  brandId         String
+  productId       String?
 
-  tool      String   // PIPPIT, VEO, SEEDANCE, SORA
-  prompt    String
+  // Event Type
+  eventType       String   // CLICK, LEAD, SALE, COMMISSION_PAID
+  eventDate       DateTime @default(now())
 
-  duration  Int?     // seconds (30-45)
-  format    String   @default("9:16")
+  // Values
+  revenue Float    @default(0)
+  commission      Float    @default(0)
+  quantity Int      @default(1)
 
-  hook         String?
-  sceneBreakdown String?
-  voiceOver    String?
-  onScreenText String?
-  suggestedMusic String?
+  // Attribution
+  platform String?  // TIKTOK, INSTAGRAM, etc.
+  socialAccountId String?
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
 
-  status    String   @default("DRAFT")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Metadata
+  ipAddress       String?
+  userAgent       String?
+  referer         String?
+  country         String?
+  device String?  // MOBILE, DESKTOP, TABLET
+
+  createdAt       DateTime @default(now())
+
+  @@index([distributionId])
+  @@index([brandId])
+  @@index([eventType])
+  @@index([eventDate])
+}
+
+model RevenueSummary {
+  id String   @id @default(cuid())
+  brandId     String
+  period String   // DAILY, WEEKLY, MONTHLY
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // Aggregates
+  postsCount Int     @default(0)
+  clicks          Int     @default(0)
+  uniqueClicks    Int     @default(0)
+  leads           Int     @default(0)
+  sales           Int     @default(0)
+  revenue         Float   @default(0)
+  commission      Float   @default(0)
+  estimatedCommission Float @default(0)
+
+  // Platform breakdown (JSON)
+  platformBreakdown String? // {"TIKTOK": {"clicks": 100, "revenue": 50}, ...}
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([brandId, period, periodStart])
+  @@index([brandId])
+  @@index([period])
+}
+
+model AffiliateProduct {
+  id              String   @id @default(cuid())
+  brandId         String
+  productId       String   // Reference to Product
+  affiliateLink String
+  commissionRate  Float    @default(10) // Percentage
+  commissionAmount Float   @default(0)
+  cookieDuration  Int      @default(7) // Days
+  status String   @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([brandId, productId])
+  @@index([brandId])
+}
+
+// ============================================
+// AFFILIATE LINK TRACKING SYSTEM
+// Unified tracking from creation to conversion
+// ============================================
+
+model AffiliateLinkTracking {
+  id            String   @id @default(cuid())
+
+  // Core references
+  productId       String?
+  contentId       String?
+  distributionId  String?
+  brandId         String?
+  
+  // Link information
+  originalLink    String
+  trackingLink    String?
+  shortCode       String?  // Short URL slug for easy access
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+
+  // Pipeline stage
+  currentPipelineStage String @default("PRODUCT_CREATED")
+  // Stages: PRODUCT_CREATED | CONTENT_GENERATED | APPROVED | DISTRIBUTED | POSTED | ACTIVE | PAUSED | EXPIRED
+  
+  // Pipeline history (JSON array of stage changes)
+  pipelineHistory String @default("[]")
+  // Format: [{"stage": "PRODUCT_CREATED", "timestamp": "2024-01-01T00:00:00Z", "note": "..."}]
+
+  // Performance metrics (cumulative)
+  clicks          Int     @default(0)
+  uniqueClicks    Int     @default(0)
+  leads           Int     @default(0)
+  sales           Int     @default(0)
+  revenue         Float   @default(0)
+  commission      Float   @default(0)
+  conversionRate  Float   @default(0)
+
+  // Link metadata
+  platform        String?  // TIKTOK, INSTAGRAM, etc.
+  contentType     String?  // VIDEO, IMAGE, CAROUSEL
+  provider        String?  // PIPPIT_MANUAL, HIGGSFIELD_AUTO, etc.
+  postUrl         String?  // URL of posted content
+  postId          String?  // Platform's post ID
+
+  // Status
+  status          String   @default("ACTIVE")  // ACTIVE, PAUSED, EXPIRED
+  pausedAt        DateTime?
+  expiredAt       DateTime?
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  lastClickedAt   DateTime?
+
+  // Event logs (for detailed tracking)
+  eventLogs       LinkEventLog[]
 
   @@index([productId])
-  @@index([tool])
-  @@index([status])
-}
-
-// ============================================
-// PHASE 2: IMAGE PROMPTS
-// AI prompts for image generation
-// ============================================
-
-model ImagePrompt {
-  id        String   @id @default(cuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  contentId String?
-  content   Content? @relation("ImagePrompts", fields: [contentId], references: [id], onDelete: SetNull)
-
-  imageType String   // THUMBNAIL, SOCIAL_POST, CAROUSEL, AD_CREATIVE
-  prompt    String
-
-  layout           String?
-  productPlacement String?
-  background       String?
-  textOverlay      String?
-  visualMood       String?
-
-  status    String   @default("DRAFT")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([productId])
-  @@index([imageType])
-  @@index([status])
-}
-
-// ============================================
-// PHASE 2: QUALITY SCORES
-// AI quality assessment per content
-// ============================================
-
-model QualityScore {
-  id        String   @id @default(cuid())
-  contentId String
-  content   Content  @relation("QualityScores", fields: [contentId], references: [id], onDelete: Cascade)
-
-  hookScore        Int     @default(0)   // 1-100
-  clarityScore     Int     @default(0)   // 1-100
-  conversionScore  Int     @default(0)   // 1-100
-  platformFitScore Int     @default(0)   // 1-100
-  overallScore     Int     @default(0)   // 1-100
-
-  bestHook         String?
-  bestCaption      String?
-  bestCta          String?
-  bestPlatform     String?
-
-  shouldPost       Boolean @default(false)
-  recommendation   String?
-
-  createdAt DateTime @default(now())
-
   @@index([contentId])
-  @@index([overallScore])
+  @@index([distributionId])
+  @@index([brandId])
+  @@index([shortCode])
+  @@index([currentPipelineStage])
+  @@index([status])
+  @@index([platform])
+}
+
+model LinkEventLog {
+  id              String   @id @default(cuid())
+  trackingId      String
+  tracking        AffiliateLinkTracking @relation(fields: [trackingId], references: [id])
+  
+  // Event details
+  eventType       String   // CLICK, LEAD, SALE, STAGE_CHANGE, STATUS_CHANGE
+  eventDate       DateTime @default(now())
+  
+  // Values (for revenue events)
+  revenue         Float    @default(0)
+  commission      Float    @default(0)
+  
+  // Attribution
+  ipAddress       String?
+  userAgent       String?
+  referer         String?
+  country         String?
+  device          String?  // MOBILE, DESKTOP, TABLET
+  
+  // Metadata
+  metadata        String?  // JSON for extra data
+  
+  createdAt       DateTime @default(now())
+
+  @@index([trackingId])
+  @@index([eventType])
+  @@index([eventDate])
 }

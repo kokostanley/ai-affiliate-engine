@@ -91,6 +91,7 @@ interface GenerateOptions {
 
 /**
  * Generate full Phase 2 content pack with variations
+ * With 20 second timeout - falls back to placeholder if slow
  */
 export async function generatePhase2Content(options: GenerateOptions): Promise<Phase2ContentPack> {
   // If no real API key, return placeholder variations
@@ -101,12 +102,17 @@ export async function generatePhase2Content(options: GenerateOptions): Promise<P
   try {
     const prompt = buildPhase2Prompt(options);
 
-    const completion = await openai.chat.completions.create({
+    // Race between AI completion and 20 second timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('AI_TIMEOUT_20S')), 20000);
+    });
+
+    const completionPromise = openai.chat.completions.create({
       model: AI_MODEL,
       messages: [
         {
           role: 'system',
-          content: `Kamu expert content creator affiliate marketing Indonesia. Bahasa gaul, engaging, persuasif. Response JSON valid dengan format yang tepat.`,
+          content: 'Kamu expert content creator affiliate marketing Indonesia. Bahasa gaul, engaging, persuasif. Response JSON valid dengan format yang tepat.',
         },
         {
           role: 'user',
@@ -115,8 +121,10 @@ export async function generatePhase2Content(options: GenerateOptions): Promise<P
       ],
       response_format: { type: 'json_object' },
       temperature: 0.85,
-      max_tokens: 8000,
+      max_tokens: 4000,
     });
+
+    const completion = await Promise.race([completionPromise, timeoutPromise]);
 
     const content = completion.choices[0]?.message?.content;
     if (!content) throw new Error('No content generated');
@@ -138,7 +146,11 @@ export async function generatePhase2Content(options: GenerateOptions): Promise<P
       whatsappText: parsed.whatsappText || parsed.caption || '',
     };
   } catch (error) {
-    console.error('AI generation failed:', error);
+    console.error('===========================================');
+    console.error('❌ AI generation failed with error:');
+    console.error(error);
+    console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack available');
+    console.error('===========================================');
     return generatePlaceholder(options);
   }
 }
@@ -331,6 +343,97 @@ function generateDefaultQualityScores(bestHook?: string, bestCaption?: string): 
     bestPlatform: 'TikTok',
     shouldPost: true,
     recommendation: 'Content siap untuk di-approve dan di-post'
+  };
+}
+
+/**
+ * Generate placeholder variations when AI fails or times out
+ */
+function generatePlaceholder(options: GenerateOptions): Phase2ContentPack {
+  const { productName, productDescription, productPrice } = options;
+
+  const hooks = [
+    `Coba cek ini! ${productName} - trending banget!`,
+    `Jangan sampai kehabisan! Stok tinggal dikit!`,
+    `Ini yang lagi viral! ${productName}`,
+    `Wajib punya! ${productName} quality premium!`,
+    `Price gila-gilaan! ${productName} lagi promo!`,
+    `Yang lagi rame! ${productName} recommended!`,
+    `Quality check! ${productName} - worth every penny!`,
+    `Tau gak sih ${productName} ini? Lagi promo besar!`,
+    `REKOMENDASI TERBARU! ${productName} - harga bersahabat!`,
+    `HOT DEAL! ${productName} diskon gede-gedean!`,
+    `Gak percaya quality? Liat review produk ini!`,
+    `BORONG sebelum nyesel kehabisan!`,
+    `${productName} - produk paling laris minggu ini!`,
+    `COBA PRODUK INI! ${productName} beda dari yang lain!`,
+    `UDAH NAMBAH BELUM? ${productName} lagi hits!`,
+    `JANGAN SAMPAI MISS! ${productName} promo terbatas!`,
+    `LEBIH DULU DARI TEMAN! ${productName} worth it!`,
+    `INI BARANG YANG HARUS PUNYA! ${productName} TOP!`,
+    `SAATNYA UPGRADE! ${productName} - quality checked!`,
+    `BUAT YANG LAIN, PUNYA ${productName.toUpperCase()}!`,
+  ];
+
+  const captions = [
+    `✨ ${productName} ✨\n\n${productDescription || 'Produk pilihan terbaik!'}\n\n💰 Harga: Rp ${(productPrice || 0).toLocaleString('id-ID')}\n\n📍 Klik link di bio untuk order!`,
+    `${productName}\n\n${productDescription || 'Kualitas premium, harga bersahabat'}\n\n⭐ Best seller!\n\n📦 Cashback available\n📍 DM untuk order!`,
+    `REKOMENDASI BARU!\n\n📦 ${productName}\n\n${productDescription || 'Produk berkualitas'}\n\n💰 Promo terbatas!\n📍 Stok tinggal sedikit!`,
+    `JANGAN LUPA!\n\n🏷️ ${productName}\n🏷️ ${productDescription || 'Produk pilihan'}\n\n💰 ${(productPrice || 0).toLocaleString('id-ID')}\n📍 Chat untuk tanya-stok!`,
+    `LIHAT INI!\n\n${productName}\n\n${productDescription || 'Quality premium'}\n\n💰 Best price! 📍 Order now!`,
+    `${productName}\n\n💡 ${productDescription || 'Produk pilihan'}\n\n📦 ${(productPrice || 0).toLocaleString('id-ID')}\n📍 Ready stock!`,
+    `PRODUK RECOMMENDED!\n\n🏷️ ${productName}\n\n✨ ${productDescription || 'Best quality'}\n\n💰 Jangan miss promo ini!\n📍 Chat kami!`,
+    `YANG INI BARU RELEASE!\n\n📦 ${productName}\n\n💰 ${(productPrice || 0).toLocaleString('id-ID')}\n${productDescription || ''}\n📍 Order sekarang!`,
+    `${productName}\n\nBest seller bulan ini!\n\n💰 Rp ${(productPrice || 0).toLocaleString('id-ID')}\n📦 ${productDescription || 'Premium quality'}\n📍 Stok limited!`,
+    `QUALITY CHECK!\n\n🏷️ ${productName}\n\n${productDescription || 'Produk bagus'}\n💰 ${(productPrice || 0).toLocaleString('id-ID')}\n📍 Ready!`,
+  ];
+
+  const ctas = [
+    'Klik link di bio sebelum kehabisan! 🔥',
+    'Chat WA untuk order sekarang! Stok terbatas! ⚡',
+    'Jangan tunda, promo bisa selesai kapan aja! ⏰',
+    'Add ke keranjang sebelum lupa! 🛒',
+    'DM/SMS/WA sekarang untuk info lebih lanjut! 📲',
+  ];
+
+  const scripts = [
+    `HOOK: Eh tau gak sih...\nBODY: ${productName} ini lagi promo besar!\nCTA: Klik link di bio sebelum kehabisan!`,
+    `HOOK: Yang ini wajib tau!\nBODY: ${productName} - quality premium dengan harga bersahabat!\nCTA: Chat kami untuk order sekarang!`,
+    `HOOK: Stok tinggal dikit!\nBODY: Jangan sampai miss ${productName} - Lagi promo besar!\nCTA: Order sekarang sebelum kehabisan!`,
+    `HOOK: Liat ini!\nBODY: ${productName} - produk paling laris!\nCTA: Klik link di bio untuk info lebih lanjut!`,
+    `HOOK: Jangan sampai miss!\nBODY: ${productName} lagi promo terbatas!\nCTA: Chat WA sekarang untuk tanya-stok!`,
+  ];
+
+  const hashtags = [
+    '#ProdukUnggulan', '#PromoBesar', '#DiskonGede', '#MurahTapiMurah', '#BestSeller',
+    '#WajibPunya', '#TrendingProduk', '#RekomendasiTerbaru', '#HotDeal', '#QualityCheck',
+    '#ProdukPilihan', '#Cashback', '#StokTerbatas', '#HargaBersahabat', '#PremiumQuality',
+    '#LarisManis', '#Recomended', '#JanganMiss', '#OrderSekarang', '#LimitedPromo',
+    '#ProdukHits', '#ViralProduk', '#QualityPremium', '#MurahMeriah', '#BestPrice',
+    '#ReadyStock', '#ChatKami', '#DMForOrder', '#PromoMingguIni', '#JanganTunda',
+  ];
+
+  const angles = [
+    'FOMO - Stok terbatas, promo terbatas waktu',
+    'Social Proof - Best seller, laris manis',
+    'Quality - Premium quality, worth every penny',
+    'Benefit - Benefit utama produk',
+    'Urgency - Jangan sampai miss kesempatan',
+  ];
+
+  return {
+    hooks,
+    captions,
+    ctas,
+    scripts,
+    hashtags,
+    angles,
+    videoPrompts: generateDefaultVideoPrompts(options),
+    imagePrompts: generateDefaultImagePrompts(options),
+    qualityScores: generateDefaultQualityScores(hooks[0], captions[0]),
+    platform: 'ALL',
+    telegramText: captions[0],
+    whatsappText: `✨ ${productName} ✨\n\n💰 Rp ${(productPrice || 0).toLocaleString('id-ID')}\n\n📍 Order sekarang!`,
   };
 }
 

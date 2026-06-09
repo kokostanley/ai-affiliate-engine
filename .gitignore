@@ -33,6 +33,10 @@ logs/
 .cache/
 .tsbuildinfo
 
+# TypeScript build info
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
 # Claude
 .claude/
 

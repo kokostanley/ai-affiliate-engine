@@ -1,12 +1,15 @@
 // ============================================
 // AI AFFILIATE DISTRIBUTION ENGINE
-// Telegram Bot - Phase 4 Enhanced
+// Telegram Bot - Grammy (Migrated from Telegraf)
 // ============================================
 
-import { Telegraf, Markup, Context } from 'telegraf';
+import { Bot, Context, GrammyError, HttpError } from 'grammy';
 import { PrismaClient } from '@prisma/client';
 import { generatePhase2Content } from '../lib/openai-content';
 import 'dotenv/config';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // ============================================
 // CONFIG
@@ -18,10 +21,31 @@ const ADMIN_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 const prisma = new PrismaClient();
 
 // ============================================
-// BOT INSTANCE
+// BOT INSTANCE (Grammy)
 // ============================================
 
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Bot(BOT_TOKEN);
+
+// ============================================
+// LOGGING HELPERS
+// ============================================
+
+function logInfo(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ℹ️ ${message}`, data || '');
+}
+
+function logError(message: string, error?: any) {
+  const timestamp = new Date().toISOString();
+  console.error(`[${timestamp}] ❌ ${message}`, error || '');
+}
+
+function logDebug(message: string, data?: any) {
+  if (process.env.DEBUG === 'true') {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] 🔍 ${message}`, data || '');
+  }
+}
 
 // ============================================
 // HELPERS
@@ -36,6 +60,61 @@ function truncate(text: string, len: number): string {
   return text.length > len ? text.substring(0, len) + '...' : text;
 }
 
+function detectPlatform(link: string): string {
+  const linkLower = link.toLowerCase();
+  if (linkLower.includes('shopee')) return 'Shopee';
+  if (linkLower.includes('tokopedia')) return 'Tokopedia';
+  if (linkLower.includes('lazada')) return 'Lazada';
+  if (linkLower.includes('tiktok')) return 'TikTok';
+  return 'Other';
+}
+
+/**
+ * Runtime verification - logs all incoming commands
+ */
+function logCommand(cmd: string, args: string, chatId: string) {
+  console.log(`[CMD] ${cmd} | args: "${args}" | chat: ${chatId}`);
+}
+
+/**
+ * Safe reply - strips Markdown special chars that cause parse errors
+ * Telegram Markdown: * _ ` [ ] ( ) ~ ` > # + - = | { } . !
+ */
+function safeReply(ctx: any, text: string, options?: any) {
+  // Characters that break Telegram Markdown
+  const unsafe = /[_*`\[\]()~>#+\-=|{}.!]/g;
+  // Only strip if parse_mode is Markdown
+  if (options?.parse_mode === 'Markdown') {
+    // Escape underscores and special chars in content
+    const safeText = text.replace(/_/g, '\\_').replace(/\*/g, '\\*');
+    return ctx.reply(safeText, options).catch((e: any) => {
+      // Fallback: send without markdown
+      console.log('[safeReply] Markdown failed, sending plain:', e.message);
+      return ctx.reply(text, { parse_mode: undefined }).catch(() => {
+        // Last resort: truncated plain text
+        return ctx.reply(text.substring(0, 4096));
+      });
+    });
+  }
+  return ctx.reply(text, options);
+}
+
+// ============================================
+// ERROR HANDLER
+// ============================================
+
+bot.catch((err) => {
+  const ctx = err.ctx;
+  logError(`Error on update ${ctx.update.update_id}`, err.error);
+  if (err.error instanceof GrammyError) {
+    ctx.reply(`Error: ${err.error.description}`);
+  } else if (err.error instanceof HttpError) {
+    ctx.reply(`HTTP error: ${err.error.message}`);
+  } else {
+    ctx.reply(`Unknown error: ${err.error.message}`);
+  }
+});
+
 // ============================================
 // COMMANDS
 // ============================================
@@ -48,7 +127,8 @@ bot.command('start', async (ctx) => {
 Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI Phase 2.
 
 📋 *Commands:*
-• /help - Bantuan
+• /brand - List atau pilih brand aktif
+• /currentbrand - Lihat brand aktif
 • /products - List produk
 • /add [link] - Tambah produk via link
 • /generate2 [productId] - Generate Phase 2 content
@@ -56,8 +136,11 @@ Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI Pha
 • /stats - Statistik
 • /pending - Konten menunggu approval
 • /view [id] - Lihat detail konten
+• /ping - Test bot
 
-💡 *Tips:* Kirim link Shopee/TikTok/Tokopedia/Lazada untuk auto-generate Phase 2!
+💡 *Tips:* Pilih brand dulu dengan /brand, lalu kirim link affiliate!
+
+*Platforms:* Shopee, TikTok, Tokopedia, Lazada, Blibli, Bukalapak
 `;
   await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
 });
@@ -93,6 +176,11 @@ bot.command('help', async (ctx) => {
   await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
+// /ping - Test bot connectivity
+bot.command('ping', async (ctx) => {
+  await ctx.reply('🏓 Pong! Bot is responsive and running.');
+});
+
 // /status - System status
 bot.command('status', async (ctx) => {
   try {
@@ -115,7 +203,7 @@ bot.command('status', async (ctx) => {
 
 🟢 Database: Connected
 🟢 AI Phase 2: Active
-🟢 Bot: Running
+🟢 Bot: Running (Grammy)
 `;
     await ctx.reply(statusText, { parse_mode: 'Markdown' });
   } catch (error) {
@@ -164,30 +252,25 @@ bot.command('products', async (ctx) => {
       return;
     }
 
-    const buttons = products.map(p => [
-      Markup.button.callback(
-        `📦 ${truncate(p.name, 25)}`,
-        `gen2_${p.id}`
-      )
-    ]);
+    let text = `📦 *Daftar Produk (${products.length})*\n\n`;
+    products.forEach((p, i) => {
+      text += `${i + 1}. ${truncate(p.name, 30)}\n   ${formatPrice(p.price)} | 📝 ${p._count.contents}\n\n`;
+    });
 
-    await ctx.reply(
-      `📦 *Daftar Produk (${products.length})*\n\nPilih produk untuk generate Phase 2:`,
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }
-    );
+    await ctx.reply(text, { parse_mode: 'Markdown' });
   } catch (error) {
     await ctx.reply('❌ Error fetching products');
   }
 });
 
-// /pending - Pending contents with Phase 2 details
+// /pending - Pending contents
 bot.command('pending', async (ctx) => {
   try {
     const pending = await prisma.content.findMany({
       where: { approvalStatus: 'PENDING' },
       include: {
         product: { select: { name: true } },
-        qualityScore: true,
+        qualityScores: true,
         _count: { select: { contentVariants: true } }
       },
       orderBy: { createdAt: 'desc' },
@@ -202,7 +285,7 @@ bot.command('pending', async (ctx) => {
     let message = `⏳ *Konten Pending (${pending.length})*\n\n`;
 
     for (const c of pending) {
-      const score = c.qualityScore?.overallScore || 0;
+      const score = c.qualityScores?.[0]?.overallScore || 0;
       const variants = c._count.contentVariants;
       const emoji = score >= 80 ? '🟢' : score >= 60 ? '🟡' : '🔴';
 
@@ -211,315 +294,125 @@ bot.command('pending', async (ctx) => {
       message += `   ID: \`${c.id.substring(0, 8)}...\`\n\n`;
     }
 
-    const buttons = pending.map(c => [
-      Markup.button.callback(`📝 ${truncate(c.product.name, 20)}`, `view_${c.id}`)
-    ]);
-
     await ctx.reply(message, {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
+      reply_markup: {
+        inline_keyboard: pending.slice(0, 5).map(c => [
+          { text: `📝 ${truncate(c.product.name, 20)}`, callback_data: `view_${c.id}` }
+        ])
+      }
     });
   } catch (error) {
     await ctx.reply('❌ Error fetching pending');
   }
 });
 
-// /add [link] - Add product with Phase 2 generation
-bot.command('add', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
+// /brand - Brand selection
+bot.command('brand', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+  const telegramId = String(ctx.from?.id);
+
+  const brands = await prisma.brand.findMany({
+    where: { status: 'ACTIVE' },
+    orderBy: { name: 'asc' },
+  });
+
+  if (brands.length === 0) {
+    await ctx.reply('❌ Tidak ada brand yang tersedia.');
+    return;
+  }
 
   if (!args) {
-    await ctx.reply('📎 Kirim format: /add [affiliate_link]\n\nContoh: /add https://shopee.co.id/product/12345');
-    return;
-  }
+    const session = await prisma.telegramSession.findUnique({ where: { telegramId } });
 
-  const link = args.trim();
+    let message = '🏢 *Brand Selection*\n\nPilih brand untuk sesi ini:\n\n';
 
-  if (!link.startsWith('http')) {
-    await ctx.reply('❌ Link tidak valid. Pastikan dimulai dengan http:// atau https://');
-    return;
-  }
-
-  const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
-  const isSupported = supportedPlatforms.some(p => link.toLowerCase().includes(p));
-
-  if (!isSupported) {
-    await ctx.reply('⚠️ Platform belum didukung.\n\nSupported: Shopee, Tokopedia, Lazada, TikTok');
-    return;
-  }
-
-  await ctx.reply('⏳ Processing... Generating Phase 2 content...');
-
-  try {
-    const slug = `prod_${Date.now()}`;
-
-    // Create product
-    const product = await prisma.product.create({
-      data: {
-        name: 'Product ' + new Date().toLocaleTimeString(),
-        slug,
-        category: 'Uncategorized',
-        price: 0,
-        commission: 10,
-        commissionAmount: 0,
-        affiliatePlatform: detectPlatform(link),
-        affiliateLink: link,
-        status: 'ACTIVE',
-      },
-    });
-
-    // Create link
-    await prisma.link.create({
-      data: {
-        slug,
-        productId: product.id,
-        originalLink: link,
-        status: 'ACTIVE',
-      },
-    });
-
-    // Generate Phase 2 content
-    const contentPack = await generatePhase2Content({
-      productName: product.name,
-      productPrice: 0,
-      productCategory: 'Uncategorized',
-    });
-
-    // Create main content
-    const content = await prisma.content.create({
-      data: {
-        productId: product.id,
-        contentType: 'PHASE2_FULL',
-        platform: 'ALL',
-        hook: contentPack.hooks[0],
-        caption: contentPack.captions[0],
-        hashtags: contentPack.hashtags.slice(0, 30).join(','),
-        cta: contentPack.ctas[0],
-        telegramText: contentPack.telegramText,
-        whatsappText: contentPack.whatsappText,
-        tone: 'casual',
-        language: 'id',
-        status: 'DRAFT',
-        approvalStatus: 'PENDING',
-      },
-    });
-
-    // Create content variants
-    const variantPromises: any[] = [];
-
-    contentPack.hooks.forEach((hook, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'HOOK',
-          variantIndex: index + 1,
-          contentValue: hook,
-        },
-      }));
-    });
-
-    contentPack.captions.forEach((caption, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'CAPTION',
-          variantIndex: index + 1,
-          contentValue: caption,
-        },
-      }));
-    });
-
-    contentPack.ctas.forEach((cta, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'CTA',
-          variantIndex: index + 1,
-          contentValue: cta,
-        },
-      }));
-    });
-
-    await Promise.all(variantPromises);
-
-    // Create quality score
-    await prisma.qualityScore.create({
-      data: {
-        contentId: content.id,
-        hookScore: contentPack.qualityScores.hookScore,
-        clarityScore: contentPack.qualityScores.clarityScore,
-        conversionScore: contentPack.qualityScores.conversionScore,
-        platformFitScore: contentPack.qualityScores.platformFitScore,
-        overallScore: contentPack.qualityScores.overallScore,
-        bestHook: contentPack.qualityScores.bestHook,
-        bestCaption: contentPack.qualityScores.bestCaption,
-        bestCta: contentPack.qualityScores.bestCta,
-        bestPlatform: contentPack.qualityScores.bestPlatform,
-        shouldPost: contentPack.qualityScores.shouldPost,
-        recommendation: contentPack.qualityScores.recommendation,
-      },
-    });
-
-    // Send summary with buttons
-    const summaryText = `
-✅ *Phase 2 Content Generated!*
-
-📦 *Produk:* ${product.name}
-🔗 *Link:* ${link}
-🏪 *Platform:* ${product.affiliatePlatform}
-
-📊 *Content Stats:*
-• Hooks: ${contentPack.hooks.length}
-• Captions: ${contentPack.captions.length}
-• CTAs: ${contentPack.ctas.length}
-
-📈 *Quality Score:* ${contentPack.qualityScores.overallScore}/100
-🎯 *Best Platform:* ${contentPack.qualityScores.bestPlatform}
-${contentPack.qualityScores.shouldPost ? '✅' : '⚠️'} *Recommendation:* ${contentPack.qualityScores.shouldPost ? 'Ready to post' : 'Needs review'}
-
-📝 *Hook Preview:*
-${truncate(contentPack.hooks[0], 100)}
-
-🆔 Content ID: \`${content.id}\`
-`;
-
-    await ctx.reply(summaryText, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Approve', callback_data: `appr_${content.id}` },
-            { text: '❌ Reject', callback_data: `rejt_${content.id}` },
-          ],
-          [
-            { text: '📝 View All Variants', callback_data: `view_${content.id}` },
-            { text: '🔄 Regenerate', callback_data: `regen_${content.id}` },
-          ]
-        ]
-      }
-    });
-
-  } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
-  }
-});
-
-// /generate2 [productId] - Generate Phase 2 for existing product
-bot.command('generate2', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
-
-  if (!args) {
-    await ctx.reply('📎 Format: /generate2 [product_id]\n\nContoh: /generate2 cmpxxxxxx');
-    return;
-  }
-
-  try {
-    const product = await prisma.product.findUnique({ where: { id: args } });
-    if (!product) {
-      await ctx.reply('❌ Produk tidak ditemukan');
-      return;
+    for (let i = 0; i < brands.length; i++) {
+      const brand = brands[i];
+      const isActive = session?.activeBrandId === brand.id;
+      const indicator = isActive ? ' ✅' : '';
+      message += `${i + 1}. *${brand.name}*${indicator}\n`;
+      message += `   /brand ${brand.slug}\n\n`;
     }
 
-    await ctx.reply(`⏳ Generating Phase 2 content untuk "${product.name}"...`);
+    if (session?.activeBrandSlug) {
+      message += `📌 Brand aktif: *${session.activeBrandSlug}*\n`;
+    } else {
+      message += `⚠️ Belum ada brand aktif.`;
+    }
 
-    const contentPack = await generatePhase2Content({
-      productName: product.name,
-      productDescription: product.description || '',
-      productPrice: Number(product.price),
-      productCategory: product.category,
-    });
-
-    // Create main content
-    const content = await prisma.content.create({
-      data: {
-        productId: product.id,
-        contentType: 'PHASE2_FULL',
-        platform: 'ALL',
-        hook: contentPack.hooks[0],
-        script: contentPack.scripts[0],
-        caption: contentPack.captions[0],
-        hashtags: contentPack.hashtags.slice(0, 30).join(','),
-        cta: contentPack.ctas[0],
-        telegramText: contentPack.telegramText,
-        whatsappText: contentPack.whatsappText,
-        tone: 'casual',
-        language: 'id',
-        status: 'DRAFT',
-        approvalStatus: 'PENDING',
-      },
-    });
-
-    // Create variants
-    const variantPromises: any[] = [];
-
-    contentPack.hooks.forEach((hook, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'HOOK',
-          variantIndex: index + 1,
-          contentValue: hook,
-        },
-      }));
-    });
-
-    contentPack.captions.forEach((caption, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'CAPTION',
-          variantIndex: index + 1,
-          contentValue: caption,
-        },
-      }));
-    });
-
-    contentPack.ctas.forEach((cta, index) => {
-      variantPromises.push(prisma.contentVariant.create({
-        data: {
-          contentId: content.id,
-          variantType: 'CTA',
-          variantIndex: index + 1,
-          contentValue: cta,
-        },
-      }));
-    });
-
-    await Promise.all(variantPromises);
-
-    // Create quality score
-    await prisma.qualityScore.create({
-      data: {
-        contentId: content.id,
-        hookScore: contentPack.qualityScores.hookScore,
-        clarityScore: contentPack.qualityScores.clarityScore,
-        conversionScore: contentPack.qualityScores.conversionScore,
-        platformFitScore: contentPack.qualityScores.platformFitScore,
-        overallScore: contentPack.qualityScores.overallScore,
-        bestHook: contentPack.qualityScores.bestHook,
-        bestCaption: contentPack.qualityScores.bestCaption,
-        bestCta: contentPack.qualityScores.bestCta,
-        bestPlatform: contentPack.qualityScores.bestPlatform,
-        shouldPost: contentPack.qualityScores.shouldPost,
-        recommendation: contentPack.qualityScores.recommendation,
-      },
-    });
-
-    await ctx.reply(`✅ Phase 2 content generated!\n\n` +
-      `📦 Product: ${product.name}\n` +
-      `📝 ${contentPack.hooks.length} hooks, ${contentPack.captions.length} captions, ${contentPack.ctas.length} CTAs\n` +
-      `📈 Quality Score: ${contentPack.qualityScores.overallScore}/100\n\n` +
-      `🆔 Content ID: \`${content.id}\`\n\n` +
-      `Ketik /view ${content.id} untuk detail lengkap`,
-      { parse_mode: 'Markdown' }
-    );
-
-  } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+    return;
   }
+
+  const brandSlug = args.toLowerCase();
+  const brand = brands.find(b => b.slug === brandSlug);
+
+  if (!brand) {
+    await ctx.reply(`❌ Brand "${args}" tidak ditemukan.\n\nBrand tersedia:\n${brands.map(b => `• ${b.name} (/brand ${b.slug})`).join('\n')}`);
+    return;
+  }
+
+  await prisma.telegramSession.upsert({
+    where: { telegramId },
+    create: {
+      telegramId,
+      activeBrandId: brand.id,
+      activeBrandSlug: brand.slug,
+      state: 'ACTIVE',
+    },
+    update: {
+      activeBrandId: brand.id,
+      activeBrandSlug: brand.slug,
+    },
+  });
+
+  const accountCount = await prisma.socialAccount.count({
+    where: { brandId: brand.id, status: 'ACTIVE' },
+  });
+
+  await ctx.reply(`✅ Brand *${brand.name}* diatur sebagai aktif.\n\n` +
+    `📊 ${accountCount} akun sosial\n` +
+    `Gunakan /add untuk menambahkan produk dengan brand ini.`,
+    { parse_mode: 'Markdown' }
+  );
 });
 
-// /view [id] - View content details
+// /currentbrand - Show active brand
+bot.command('currentbrand', async (ctx) => {
+  const telegramId = String(ctx.from?.id);
+  const session = await prisma.telegramSession.findUnique({ where: { telegramId } });
+
+  if (!session?.activeBrandId) {
+    await ctx.reply('⚠️ Belum ada brand aktif.\n\nGunakan /brand untuk memilih brand:\n/brand cepatdapat\n/brand crypto-ew');
+    return;
+  }
+
+  const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
+
+  if (!brand) {
+    await ctx.reply('❌ Brand aktif tidak ditemukan.');
+    return;
+  }
+
+  const zernioCount = await prisma.zernioConfig.count({
+    where: { brandId: brand.id, isActive: true },
+  });
+
+  const accountCount = await prisma.socialAccount.count({
+    where: { brandId: brand.id, status: 'ACTIVE' },
+  });
+
+  await ctx.reply(`📌 *Brand Aktif*\n\n` +
+    `🏢 *${brand.name}*\n` +
+    `📊 Zernio Keys: ${zernioCount}\n` +
+    `📱 Akun Sosial: ${accountCount}\n` +
+    `📋 Slug: \`${brand.slug}\``,
+    { parse_mode: 'Markdown' }
+  );
+});
+
+// /view [id] - View content details with full breakdown
 bot.command('view', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1).join(' ');
 
@@ -533,50 +426,125 @@ bot.command('view', async (ctx) => {
       where: { id: args },
       include: {
         product: true,
-        qualityScore: true,
+        qualityScores: true,
         contentVariants: { orderBy: { variantIndex: 'asc' } },
+        videoPrompts: true,
+        imagePrompts: true,
       },
     });
 
     if (!content) {
-      await ctx.reply('❌ Content tidak ditemukan');
+      await ctx.reply('❌ Content tidak ditemukan.');
       return;
     }
 
-    // Group variants
+    const quality = content.qualityScores?.[0];
     const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
     const captions = content.contentVariants.filter(v => v.variantType === 'CAPTION');
     const ctas = content.contentVariants.filter(v => v.variantType === 'CTA');
+    const pippitPrompt = content.videoPrompts?.find(p => p.tool === 'PIPPIT');
+    const higgsfieldPrompt = content.videoPrompts?.find(p => p.tool?.toUpperCase().includes('HIGGSFIELD'));
+    const imagePrompt = content.imagePrompts?.[0];
 
-    const quality = content.qualityScore;
+    // Build messages array for splitting
+    const messages: string[] = [];
 
-    let detailText = `
-📝 *Content Detail*
+    // Message 1: Basic Info & Status
+    let msg1 = `📝 *Content Detail*\n\n`;
+    msg1 += `📦 *Product:* ${content.product.name}\n`;
+    msg1 += `💰 *Harga:* ${formatPrice(content.product.price)}\n`;
+    msg1 += `🏪 *Platform:* ${content.product.affiliatePlatform}\n`;
+    msg1 += `📋 *Status:* ${content.approvalStatus}\n`;
+    msg1 += `🆔 ID: \`${content.id.substring(0, 12)}...\`\n`;
+    messages.push(msg1);
 
-📦 *Product:* ${content.product.name}
-💰 *Harga:* ${formatPrice(content.product.price)}
-🏪 *Platform:* ${content.product.affiliatePlatform}
+    // Message 2: Quality Scores
+    if (quality) {
+      let msg2 = `📈 *Quality Scores*\n\n`;
+      msg2 += `⭐ Overall: *${quality.overallScore}/100*\n`;
+      msg2 += `🎣 Hook: ${quality.hookScore}/100\n`;
+      msg2 += `🔍 Clarity: ${quality.clarityScore}/100\n`;
+      msg2 += `💰 Conversion: ${quality.conversionScore}/100\n`;
+      msg2 += `📱 Platform Fit: ${quality.platformFitScore}/100\n`;
+      msg2 += `\n🎯 Best Platform: ${quality.bestPlatform || 'N/A'}\n`;
+      msg2 += `📋 ${quality.shouldPost ? '✅' : '⚠️'} ${quality.recommendation || ''}`;
+      messages.push(msg2);
+    }
 
-📊 *Stats:*
-• Hooks: ${hooks.length}
-• Captions: ${captions.length}
-• CTAs: ${ctas.length}
+    // Message 3: Best Hook
+    if (quality?.bestHook || hooks[0]) {
+      let msg3 = `🎣 *Best Hook*\n\n`;
+      msg3 += `\`\`\`\n${truncate(quality?.bestHook || hooks[0]?.contentValue || '', 500)}\n\`\`\``;
+      messages.push(msg3);
+    }
 
-${quality ? `📈 *Quality Scores:*
-• Overall: ${quality.overallScore}/100
-• Hook: ${quality.hookScore}/100
-• Clarity: ${quality.clarityScore}/100
-• Conversion: ${quality.conversionScore}/100
-• Platform Fit: ${quality.platformFitScore}/100` : ''}
+    // Message 4: Best Caption
+    if (quality?.bestCaption || captions[0]) {
+      let msg4 = `📄 *Best Caption*\n\n`;
+      msg4 += `\`\`\`\n${truncate(quality?.bestCaption || captions[0]?.contentValue || '', 500)}\n\`\`\``;
+      messages.push(msg4);
+    }
 
-${quality?.shouldPost ? '✅' : '⚠️'} *Status:* ${content.approvalStatus}
+    // Message 5: Best CTA
+    if (quality?.bestCta || ctas[0]) {
+      let msg5 = `🎯 *Best CTA*\n\n`;
+      msg5 += `\`\`\`\n${quality?.bestCta || ctas[0]?.contentValue || 'N/A'}\n\`\`\``;
+      messages.push(msg5);
+    }
 
-📝 *Best Hook:*
-${truncate(quality?.bestHook || content.hook || '', 150)}
-`;
+    // Message 6: Hashtags
+    if (content.hashtags) {
+      let msg6 = `#️⃣ *Hashtags*\n\n`;
+      msg6 += `\`\`\`\n${content.hashtags}\n\`\`\``;
+      messages.push(msg6);
+    }
 
-    await ctx.reply(detailText, {
-      parse_mode: 'Markdown',
+    // Message 7: Pippit Video Prompt
+    if (pippitPrompt) {
+      let msg7 = `🎬 *Pippit Video Prompt*\n\n`;
+      msg7 += `\`\`\`\n${truncate(pippitPrompt.prompt, 400)}\n\`\`\``;
+      if (pippitPrompt.duration) msg7 += `\n⏱️ Duration: ${pippitPrompt.duration}s`;
+      if (pippitPrompt.format) msg7 += ` | 📐 Format: ${pippitPrompt.format}`;
+      messages.push(msg7);
+    }
+
+    // Message 8: Higgsfield Video Prompt
+    if (higgsfieldPrompt) {
+      let msg8 = `🎥 *Higgsfield Video Prompt*\n\n`;
+      msg8 += `\`\`\`\n${truncate(higgsfieldPrompt.prompt, 400)}\n\`\`\``;
+      if (higgsfieldPrompt.duration) msg8 += `\n⏱️ Duration: ${higgsfieldPrompt.duration}s`;
+      messages.push(msg8);
+    }
+
+    // Message 9: Image Prompt
+    if (imagePrompt) {
+      let msg9 = `🖼️ *Image Prompt*\n\n`;
+      msg9 += `Type: ${imagePrompt.imageType || 'N/A'}\n`;
+      msg9 += `\`\`\`\n${truncate(imagePrompt.prompt, 300)}\n\`\`\``;
+      if (imagePrompt.textOverlay) msg9 += `\n📝 Overlay: ${imagePrompt.textOverlay}`;
+      messages.push(msg9);
+    }
+
+    // Message 10: Carousel Outline (if available)
+    if (captions.length > 1) {
+      let msg10 = `🎠 *Carousel Outline*\n\n`;
+      captions.slice(0, 5).forEach((cap, i) => {
+        msg10 += `${i + 1}. ${truncate(cap.contentValue, 100)}\n\n`;
+      });
+      messages.push(msg10);
+    }
+
+    // Send messages with delays to avoid rate limiting
+    for (let i = 0; i < messages.length; i++) {
+      await ctx.reply(messages[i], { parse_mode: 'Markdown' });
+      // Small delay between messages to avoid flood
+      if (i < messages.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+
+    // Send action buttons
+    await ctx.reply('Actions:', {
       reply_markup: {
         inline_keyboard: [
           [
@@ -584,14 +552,14 @@ ${truncate(quality?.bestHook || content.hook || '', 150)}
             { text: '❌ Reject', callback_data: `rejt_${content.id}` },
           ],
           [
-            { text: '🔄 Regenerate Hooks', callback_data: `regen_hooks_${content.id}` },
-            { text: '📋 View All Variants', callback_data: `variants_${content.id}` },
+            { text: '📝 View Details', callback_data: `view_${content.id}` },
           ]
         ]
       }
     });
 
   } catch (error: any) {
+    console.error('Error in /view command:', error);
     await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
@@ -611,7 +579,6 @@ bot.command('approve', async (ctx) => {
       data: {
         approvalStatus: 'APPROVED',
         approvedAt: new Date(),
-        approvedBy: ctx.from.username || 'admin',
       },
       include: { product: true },
     });
@@ -620,7 +587,6 @@ bot.command('approve', async (ctx) => {
       data: {
         contentId: content.id,
         action: 'APPROVED',
-        actionBy: ctx.from.username || 'admin',
         notes: 'Approved via Telegram bot',
       },
     });
@@ -644,7 +610,7 @@ bot.command('reject', async (ctx) => {
   }
 
   try {
-    const content = await prisma.content.update({
+    await prisma.content.update({
       where: { id: contentId },
       data: {
         approvalStatus: 'REJECTED',
@@ -666,14 +632,13 @@ bot.command('production', async (ctx) => {
     const packages = await prisma.productionPackage.findMany({
       include: {
         product: true,
-        content: true,
       },
       orderBy: { createdAt: 'desc' },
       take: 10,
     });
 
     if (packages.length === 0) {
-      await ctx.reply('📦 No production packages yet.\n\nUse /production [content_id] to generate one.');
+      await ctx.reply('📦 No production packages yet.');
       return;
     }
 
@@ -689,187 +654,9 @@ bot.command('production', async (ctx) => {
       text += `   ID: \`${pkg.id.substring(0, 8)}...\`\n\n`;
     }
 
-    text += '\nUse /showpack [id] for details';
-
     await ctx.reply(text, { parse_mode: 'Markdown' });
   } catch (error) {
     await ctx.reply('❌ Error fetching production packages');
-  }
-});
-
-// /showpack [id] - Show production package details
-bot.command('showpack', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
-
-  if (!args) {
-    await ctx.reply('📎 Format: /showpack [package_id]\n\nOr tap a package from /production list.');
-    return;
-  }
-
-  try {
-    const pkg = await prisma.productionPackage.findUnique({
-      where: { id: args },
-      include: {
-        product: true,
-        content: true,
-      },
-    });
-
-    if (!pkg) {
-      await ctx.reply('❌ Package not found');
-      return;
-    }
-
-    const hasVideoPrompts = pkg.videoPromptPippit || pkg.videoPromptVeo || pkg.videoPromptSeedance || pkg.videoPromptSora;
-    const hasImagePrompts = pkg.imagePromptThumbnail || pkg.imagePromptSocial || pkg.imagePromptCarousel || pkg.imagePromptAd;
-    const hasScripts = pkg.voiceoverScript || pkg.subtitleScript;
-
-    const detailText = `
-📦 *Production Package*
-
-📦 *Product:* ${pkg.product.name}
-🏪 *Platform:* ${pkg.bestPlatform || 'TBD'}
-📊 *Score:* ${pkg.overallScore}/100
-📈 *Status:* ${pkg.status}
-
-*Video Prompts:* ${hasVideoPrompts ? '✅' : '❌'}
-*Image Prompts:* ${hasImagePrompts ? '✅' : '❌'}
-*Scripts:* ${hasScripts ? '✅' : '❌'}
-
-🆔 ID: \`${pkg.id}\`
-📅 Created: ${new Date(pkg.createdAt).toLocaleString('id-ID')}
-${pkg.exportedAt ? `📤 Exported: ${new Date(pkg.exportedAt).toLocaleString('id-ID')}` : ''}
-
-Best Hook:
-${pkg.content.hook?.substring(0, 100) || 'N/A'}...
-`;
-
-    await ctx.reply(detailText, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Mark Ready', callback_data: `pkg_ready_${pkg.id}` },
-            { text: '🟣 Mark Rendered', callback_data: `pkg_rendered_${pkg.id}` },
-          ],
-          [
-            { text: '🔄 Regenerate', callback_data: `pkg_regen_${pkg.id}` },
-            { text: '📤 Export', callback_data: `pkg_export_${pkg.id}` },
-          ],
-        ]
-      }
-    });
-
-  } catch (error) {
-    await ctx.reply(`❌ Error: ${error}`);
-  }
-});
-
-// /genproduction [content_id] - Generate production package
-bot.command('genproduction', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
-
-  if (!args) {
-    // List approved content without packages
-    const approvedContent = await prisma.content.findMany({
-      where: {
-        approvalStatus: 'APPROVED',
-        productionPackages: { none: {} }
-      },
-      include: { product: true },
-      take: 5,
-    });
-
-    if (approvedContent.length === 0) {
-      await ctx.reply('✅ All approved content has production packages, or no approved content yet.');
-      return;
-    }
-
-    let text = '📋 *Approved Content for Production:*\n\n';
-    for (const c of approvedContent) {
-      text += `• ${c.product.name}\n   ID: \`${c.id.substring(0, 8)}...\`\n\n`;
-    }
-    text += '\nUse /genproduction [content_id]';
-
-    await ctx.reply(text, { parse_mode: 'Markdown' });
-    return;
-  }
-
-  await ctx.reply('⏳ Generating production package...');
-
-  try {
-    // Get content
-    const content = await prisma.content.findUnique({
-      where: { id: args },
-      include: { product: true, qualityScores: { take: 1 } },
-    });
-
-    if (!content) {
-      await ctx.reply('❌ Content not found');
-      return;
-    }
-
-    if (content.approvalStatus !== 'APPROVED') {
-      await ctx.reply('❌ Content must be approved first');
-      return;
-    }
-
-    // Generate production prompts
-    const { generateProductionPrompts } = await import('../lib/openai-content');
-
-    const prompts = await generateProductionPrompts({
-      productName: content.product.name,
-      productDescription: content.product.description || '',
-      productPrice: Number(content.product.price),
-      bestHook: content.qualityScores?.[0]?.bestHook || content.hook,
-      bestCaption: content.qualityScores?.[0]?.bestCaption || content.caption,
-      bestCta: content.qualityScores?.[0]?.bestCta || content.cta,
-      hashtags: content.hashtags,
-    });
-
-    // Create production package
-    const pkg = await prisma.productionPackage.create({
-      data: {
-        contentId: content.id,
-        productId: content.productId,
-        status: 'production_ready',
-        bestPlatform: content.qualityScores?.[0]?.bestPlatform || 'TikTok',
-        overallScore: content.qualityScores?.[0]?.overallScore || 0,
-        videoPromptPippit: prompts.videoPromptPippit,
-        videoPromptVeo: prompts.videoPromptVeo,
-        videoPromptSeedance: prompts.videoPromptSeedance,
-        videoPromptSora: prompts.videoPromptSora,
-        imagePromptThumbnail: prompts.imagePromptThumbnail,
-        imagePromptSocial: prompts.imagePromptSocial,
-        imagePromptCarousel: prompts.imagePromptCarousel,
-        imagePromptAd: prompts.imagePromptAd,
-        voiceoverScript: prompts.voiceoverScript,
-        subtitleScript: prompts.subtitleScript,
-      },
-    });
-
-    const successText = `
-✅ *Production Package Generated!*
-
-📦 *Product:* ${content.product.name}
-🏪 *Platform:* ${pkg.bestPlatform}
-📊 *Score:* ${pkg.overallScore}/100
-
-*Included:*
-✅ 4 Video Prompts (Pippit, Veo, Seedance, Sora)
-✅ 4 Image Prompts (Thumbnail, Social, Carousel, Ad)
-✅ Voiceover Script
-✅ Subtitle Script
-
-🆔 Package ID: \`${pkg.id}\`
-
-Use /showpack ${pkg.id} untuk detail lengkap
-`;
-
-    await ctx.reply(successText, { parse_mode: 'Markdown' });
-
-  } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
 
@@ -885,7 +672,7 @@ bot.command('render', async (ctx) => {
     });
 
     if (jobs.length === 0) {
-      await ctx.reply('🎬 No render jobs yet.\n\nUse /renderpkg [package_id] to create jobs.');
+      await ctx.reply('🎬 No render jobs yet.');
       return;
     }
 
@@ -899,11 +686,8 @@ bot.command('render', async (ctx) => {
 
       text += `${status} ${type} *${job.tool}*\n`;
       text += `   ${job.productionPackage.product.name}\n`;
-      text += `   Status: ${job.status}\n`;
-      text += `   ID: \`${job.id.substring(0, 8)}...\`\n\n`;
+      text += `   Status: ${job.status}\n\n`;
     }
-
-    text += '\nUse /renderjob [id] for details';
 
     await ctx.reply(text, { parse_mode: 'Markdown' });
   } catch (error) {
@@ -911,149 +695,1239 @@ bot.command('render', async (ctx) => {
   }
 });
 
-// /renderpkg [package_id] - Create render jobs for package
-bot.command('renderpkg', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
+// ============================================
+// SINGLE COMMAND INTAKE WORKFLOW
+// /add [link] - AUTO: Product → Content → Auto-Approve → Generate → Zernio
+// ============================================
 
+/**
+ * Quick intake for IMAGE - auto-generates and creates Zernio draft
+ */
+bot.command('add', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+
+  logCommand('/add', args, String(ctx.from?.id));
   if (!args) {
-    await ctx.reply('📎 Format: /renderpkg [package_id]\n\nUse /production to find package IDs.');
+    await safeReply(ctx, `IMAGE AUTO-POST
+
+Usage:
+/add [affiliate_link]
+
+Example:
+/add https://shopee.co.id/product/12345
+
+Flow (automatic):
+1. Creates product
+2. Creates content
+3. Auto-approves
+4. Generates image (DALL-E)
+5. Uploads to Google Drive
+6. Creates Zernio draft
+
+Just send the link!`);
     return;
   }
 
+  const telegramId = String(ctx.from?.id);
+  const session = await prisma.telegramSession.findUnique({ where: { telegramId } });
+
+  if (!session?.activeBrandId) {
+    await safeReply(ctx, `Brand belum dipilih
+
+/brand cepatdapat`);
+    return;
+  }
+
+  const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
+
+  if (!brand) {
+    await safeReply(ctx, `Brand tidak ditemukan.`);
+    return;
+  }
+
+  const link = args.startsWith('http') ? args : null;
+  if (!link) {
+    await safeReply(ctx, `Invalid link. Use: /add [affiliate_link]`);
+    return;
+  }
+
+  await safeReply(ctx, `IMAGE AUTO-POST
+
+Creating product and generating...`);
+
   try {
-    const pkg = await prisma.productionPackage.findUnique({
-      where: { id: args },
-      include: { product: true },
+    const platform = detectPlatform(link);
+    const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Check duplicate
+    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    if (existing) {
+      await safeReply(ctx, `Link exists: ${existing.name}`);
+      return;
+    }
+
+    // 1. Create product
+    const product = await prisma.product.create({
+      data: {
+        name: `Product ${new Date().toLocaleTimeString('id-ID')}`,
+        slug,
+        category: 'Uncategorized',
+        price: 0,
+        commission: 10,
+        commissionAmount: 0,
+        affiliatePlatform: platform,
+        affiliateLink: link,
+        status: 'ACTIVE',
+      },
     });
 
-    if (!pkg) {
-      await ctx.reply('❌ Package not found');
-      return;
-    }
+    // 2. Create link
+    await prisma.link.create({
+      data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' },
+    });
 
-    // Create video render jobs
-    const jobs = [];
-
-    if (pkg.videoPromptPippit) {
-      jobs.push({
-        productionPackageId: pkg.id,
-        jobType: 'VIDEO',
-        tool: 'PIPPIT',
-        prompt: pkg.videoPromptPippit,
-        duration: 30,
-        format: '9:16',
-        status: 'queued',
+    // 2b. Create affiliate link tracking record
+    try {
+      const { createTrackingRecord, generateShortCode } = await import('../services/link-tracking');
+      const trackingResult = await createTrackingRecord({
+        productId: product.id,
+        brandId: brand.id,
+        originalLink: link,
+        shortCode: generateShortCode(),
+        platform: 'INSTAGRAM',
+        contentType: 'IMAGE',
+        provider: 'OPENAI_IMAGE',
+        utmSource: 'telegram',
+        utmMedium: 'bot',
+        utmCampaign: brand.slug + '_image',
       });
+      if (trackingResult.success) {
+        console.log('[Add] Created tracking record: ' + trackingResult.tracking?.id);
+      }
+    } catch (trackingError) {
+      console.error('[Add] Failed to create tracking record:', trackingError);
     }
 
-    if (pkg.videoPromptVeo) {
-      jobs.push({
-        productionPackageId: pkg.id,
-        jobType: 'VIDEO',
-        tool: 'VEO',
-        prompt: pkg.videoPromptVeo,
-        duration: 45,
-        format: '16:9',
-        status: 'queued',
-      });
+    // 3. Create content
+    const content = await prisma.content.create({
+      data: {
+        productId: product.id,
+        contentType: 'PHASE2_IMAGE',
+        platform: 'INSTAGRAM',
+        hook: 'Auto-generated image content',
+        caption: 'Auto-generated content',
+        status: 'DRAFT',
+        approvalStatus: 'PENDING',
+        tone: 'casual',
+        language: 'id',
+      },
+    });
+
+    // 4. Auto-approve and trigger pipeline
+    await safeReply(ctx, `Product created. Auto-approving and generating image...`);
+
+    const { executeApprovalPipeline } = await import('../services/approval-pipeline');
+    const result = await executeApprovalPipeline(content.id, {
+      autoApprove: true,
+      provider: 'OPENAI_IMAGE',
+      platform: 'INSTAGRAM',
+      brandId: brand.id,
+    });
+
+    // Build response
+    let response = `IMAGE AUTO-POST COMPLETE
+
+Product: ${product.name}
+Type: IMAGE
+
+`;
+    for (const step of result.steps) {
+      response += step + '\n';
     }
 
-    if (pkg.imagePromptThumbnail) {
-      jobs.push({
-        productionPackageId: pkg.id,
-        jobType: 'IMAGE',
-        tool: 'DALL_E',
-        prompt: pkg.imagePromptThumbnail,
-        status: 'queued',
-      });
+    if (result.productionPackageId) {
+      response += `\nPackage ID: ${result.productionPackageId.substring(0, 8)}...\n`;
     }
 
-    if (jobs.length === 0) {
-      await ctx.reply('⚠️ No prompts available in this package');
-      return;
+    if (result.renderJobIds?.length > 0) {
+      response += `Render jobs: ${result.renderJobIds.length}\n`;
     }
 
-    await prisma.renderJob.createMany({ data: jobs });
+    response += `\nNext: /schedule [id] [time] to schedule`;
 
-    await ctx.reply(`🎬 *Render Jobs Created!*\n\nPackage: ${pkg.product.name}\n\nCreated ${jobs.length} jobs:\n${jobs.map(j => `• ${j.jobType === 'VIDEO' ? '🎬' : '🖼️'} ${j.tool}`).join('\n')}\n\nUse /render to see all jobs`,
-      { parse_mode: 'Markdown' });
+    await safeReply(ctx, response);
 
   } catch (error: any) {
-    await ctx.reply(`❌ Error: ${error.message}`);
+    console.error('[Add] Error:', error);
+    await safeReply(ctx, `Error: ${error.message}`);
   }
 });
 
-// /renderjob [id] - Show render job details
-bot.command('renderjob', async (ctx) => {
-  const args = ctx.message.text.split(' ').slice(1).join(' ');
 
-  if (!args) {
-    await ctx.reply('📎 Format: /renderjob [job_id]');
-    return;
-  }
 
+// addcarousel - Add carousel
+bot.command('addcarousel', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+  logCommand('addcarousel', args, String(ctx.from?.id));
+  if (!args) { await safeReply(ctx, '/addcarousel [link]'); return; }
+  const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
+  if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
+  const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
+  if (!brand) { await safeReply(ctx, 'Brand error'); return; }
+  await safeReply(ctx, 'CAROUSEL creating...');
   try {
-    const job = await prisma.renderJob.findUnique({
-      where: { id: args },
+    const p = detectPlatform(args);
+    if (await prisma.product.findFirst({ where: { affiliateLink: args } })) { await safeReply(ctx, 'Link exists'); return; }
+    const slug = 'prod_' + Date.now();
+    const product = await prisma.product.create({ data: { name: slug, slug, category: 'Uncategorized', price: 0, commission: 10, affiliatePlatform: p, affiliateLink: args, status: 'ACTIVE' } });
+    await prisma.link.create({ data: { slug, productId: product.id, originalLink: args, status: 'ACTIVE' } });
+    const content = await prisma.content.create({ data: { productId: product.id, contentType: 'PHASE2_CAROUSEL', platform: 'INSTAGRAM', hook: 'Carousel', caption: 'Carousel', status: 'DRAFT', approvalStatus: 'PENDING' } });
+    await safeReply(ctx, 'CAROUSEL created\nID: ' + content.id.substring(0,8));
+  } catch (e) { await safeReply(ctx, 'Error: ' + e.message); }
+});
+
+bot.command('addvideo', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+  if (!args) { await safeReply(ctx, '/addvideo [link]'); return; }
+  logCommand('addvideo', args, String(ctx.from?.id));
+  const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
+  if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
+  const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
+  if (!brand) { await safeReply(ctx, 'Brand error'); return; }
+  await safeReply(ctx, 'VIDEO creating...');
+  try {
+    const p = detectPlatform(args);
+    if (await prisma.product.findFirst({ where: { affiliateLink: args } })) { await safeReply(ctx, 'Link exists'); return; }
+    const slug = 'prod_' + Date.now();
+    const product = await prisma.product.create({ data: { name: slug, slug, category: 'Uncategorized', price: 0, commission: 10, affiliatePlatform: p, affiliateLink: args, status: 'ACTIVE' } });
+    await prisma.link.create({ data: { slug, productId: product.id, originalLink: args, status: 'ACTIVE' } });
+    const content = await prisma.content.create({ data: { productId: product.id, contentType: 'PHASE2_FULL', platform: 'TIKTOK', hook: 'Video', caption: 'Video', status: 'DRAFT', approvalStatus: 'PENDING' } });
+    await safeReply(ctx, 'VIDEO created\nID: ' + content.id.substring(0,8));
+  } catch (e) { await safeReply(ctx, 'Error: ' + e.message); }
+});
+// /showflow - Show complete pipeline flow status
+bot.command('showflow', async (ctx) => {
+  try {
+    const telegramId = String(ctx.from?.id || '');
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
+
+    const brandId = session?.activeBrandId;
+
+    // Get all pipeline stats with simple counts
+    const [
+      pendingContent,
+      approvedContent,
+      productionPackages,
+      renderJobs,
+      distributionItems,
+      brands,
+    ] = await Promise.all([
+      prisma.content.count({ where: { approvalStatus: 'PENDING' } }),
+      prisma.content.count({ where: { approvalStatus: 'APPROVED' } }),
+      prisma.productionPackage.count(),
+      prisma.renderJob.count(),
+      prisma.distributionQueue.count(brandId ? { where: { brandId } } : {}),
+      prisma.brand.count({ where: { status: 'ACTIVE' } }),
+    ]);
+
+    const [
+      queuedJobs,
+      completedJobs,
+      failedJobs,
+      distDraft,
+      distQueued,
+      distZernioDraft,
+      distPosted,
+      distFailed,
+    ] = await Promise.all([
+      prisma.renderJob.count({ where: { status: 'queued' } }),
+      prisma.renderJob.count({ where: { status: 'completed' } }),
+      prisma.renderJob.count({ where: { status: 'failed' } }),
+      prisma.distributionQueue.count(brandId ? { where: { brandId, status: 'DRAFT' } } : { where: { status: 'DRAFT' } }),
+      prisma.distributionQueue.count(brandId ? { where: { brandId, status: 'QUEUED' } } : { where: { status: 'QUEUED' } }),
+      prisma.distributionQueue.count(brandId ? { where: { brandId, status: 'ZERNIO_DRAFT_CREATED' } } : { where: { status: 'ZERNIO_DRAFT_CREATED' } }),
+      prisma.distributionQueue.count(brandId ? { where: { brandId, status: 'POSTED_CONFIRMED' } } : { where: { status: 'POSTED_CONFIRMED' } }),
+      prisma.distributionQueue.count(brandId ? { where: { brandId, status: 'FAILED' } } : { where: { status: 'FAILED' } }),
+    ]);
+
+    // Get recent render jobs with details
+    const recentJobs = await prisma.renderJob.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 5,
       include: { productionPackage: { include: { product: true } } },
     });
 
-    if (!job) {
-      await ctx.reply('❌ Job not found');
-      return;
+    // Get recent distribution items
+    const recentDist = await prisma.distributionQueue.findMany({
+      where: brandId ? { brandId } : {},
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      include: { brand: true },
+    });
+
+    // Build the message
+    let message = `🔄 *PIPELINE FLOW STATUS*\n\n`;
+
+    message += `📊 *Summary*\n`;
+    message += `├ Content Pending: ${pendingContent}\n`;
+    message += `├ Content Approved: ${approvedContent}\n`;
+    message += `├ Brands: ${brands}\n\n`;
+
+    message += `🎬 *RENDER JOBS*\n`;
+    message += `├ Queued: ${queuedJobs}\n`;
+    message += `├ Completed: ${completedJobs}\n`;
+    message += `├ Failed: ${failedJobs}\n`;
+    message += `└ Total: ${renderJobs}\n\n`;
+
+    message += `📨 *DISTRIBUTION*\n`;
+    message += `├ Draft: ${distDraft}\n`;
+    message += `├ Queued: ${distQueued}\n`;
+    message += `├ Zernio Draft: ${distZernioDraft}\n`;
+    message += `├ Zernio Scheduled: ${distZernioDraft > 0 ? '—' : '0'}\n`;
+    message += `├ Posted Confirmed: ${distPosted}\n`;
+    message += `└ Failed: ${distFailed}\n\n`;
+
+    if (distZernioDraft > 0) {
+      message += `⚠️ *Zernio Drafts:* ${distZernioDraft} items waiting\n`;
+      message += `   Use /schedule [id] [datetime] to schedule\n`;
+      message += `   Or check Zernio dashboard to publish manually\n\n`;
     }
 
-    const status = job.status === 'completed' ? '✅' :
-                   job.status === 'processing' ? '⏳' :
-                   job.status === 'failed' ? '❌' : '⏳';
+    // Recent jobs
+    if (recentJobs.length > 0) {
+      message += `📋 *Recent Render Jobs*\n`;
+      for (const job of recentJobs) {
+        const status = job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : '⏳';
+        message += `${status} ${job.tool} - ${job.productionPackage?.product?.name || 'N/A'}\n`;
+      }
+      message += '\n';
+    }
 
-    let text = `
-🎬 *Render Job Details*
+    // Recent distribution
+    if (recentDist.length > 0) {
+      message += `📋 *Recent Distribution*\n`;
+      for (const dist of recentDist) {
+        let statusEmoji = '📝';
+        if (dist.status === 'POSTED_CONFIRMED') statusEmoji = '✅';
+        else if (dist.status === 'ZERNIO_DRAFT_CREATED') statusEmoji = '📝';
+        else if (dist.status === 'ZERNIO_SCHEDULED') statusEmoji = '🕐';
+        else if (dist.status === 'FAILED') statusEmoji = '❌';
+        else if (dist.status === 'QUEUED') statusEmoji = '⏳';
+        message += `${statusEmoji} ${dist.status}\n`;
+        if (dist.scheduledAt) {
+          message += `   🕐 Scheduled: ${new Date(dist.scheduledAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n`;
+        }
+        if (dist.postId) {
+          message += `   ID: \`${dist.postId.substring(0, 12)}...\``;
+        }
+        message += '\n';
+      }
+    }
 
-${status} *Tool:* ${job.tool}
-📦 *Type:* ${job.jobType}
-📊 *Status:* ${job.status}
-${job.duration ? `⏱️ *Duration:* ${job.duration}s` : ''}
-${job.format ? `📐 *Format:* ${job.format}` : ''}
+    // Pipeline diagram
+    message += `\n📐 *CONTENT TYPES*\n`;
+    message += `\`\`\`\n`;
+    message += `🖼️ /intake [link]      → IMAGE post\n`;
+    message += `🎠 /intakecarousel     → CAROUSEL (5-7 slides)\n`;
+    message += `🎬 /intakevideo [link] → VIDEO (Pippit manual)\n`;
+    message += `\`\`\`\n\n`;
 
-*Product:* ${job.productionPackage.product.name}
+    message += `📊 *POSTING MIX (Recommended)*\n`;
+    message += `• 70% → IMAGE/CAROUSEL (auto-generated)\n`;
+    message += `• 30% → VIDEO (manual Pippit)\n\n`;
 
-${job.errorMessage ? `❌ *Error:* ${job.errorMessage}` : ''}
-${job.outputUrl ? `📎 *Output:* ${job.outputUrl}` : ''}
+    message += `💡 *Daily Example (3 posts)*\n`;
+    message += `• Morning: 🖼️ Image post\n`;
+    message += `• Afternoon: 🎠 Carousel\n`;
+    message += `• Evening: 🖼️ Image OR 🎬 Video\n\n`;
 
-🆔 ID: \`${job.id}\`
-`;
+    message += `📋 *Actions:*\n`;
+    message += `• /pending - View & approve content\n`;
+    message += `• /approve - Generate assets & create Zernio draft\n`;
+    message += `• /schedule [id] [datetime] - Schedule draft\n`;
+    message += `• /zerniostatus [postId] - Check Zernio post`;
 
-    await ctx.reply(text, { parse_mode: 'Markdown' });
+    await ctx.reply(message, { parse_mode: 'Markdown' });
 
+  } catch (error: any) {
+    console.error('[ShowFlow] Error:', error);
+    await ctx.reply(`❌ Error fetching pipeline status: ${error.message}`);
+  }
+});
+
+// /linktrack - Show tracking status for affiliate links
+bot.command('linktrack', handleLinkTrackCommand);
+
+// ============================================
+// CONTENT CALENDAR COMMANDS
+// ============================================
+
+import * as calendar from '../services/calendar';
+import { handleLinkTrackCommand } from './commands/linktrack';
+
+// /queue - Show content queue status
+bot.command('queue', async (ctx) => {
+  try {
+    const telegramId = String(ctx.from?.id || '');
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
+    const brandId = session?.activeBrandId || undefined;
+
+    // Get queue stats
+    const stats = await calendar.getQueueStats(brandId);
+
+    // Get pending items
+    const pending = await calendar.getPendingQueue(brandId, 10);
+
+    // Get schedule
+    const schedule = await calendar.getPostingSchedule(brandId);
+
+    let message = `📅 *CONTENT QUEUE*\n\n`;
+
+    message += `📊 *Queue Stats*\n`;
+    message += `├ Pending: ${stats.pending}\n`;
+    message += `├ Scheduled: ${stats.scheduled}\n`;
+    message += `├ Posted: ${stats.posted}\n`;
+    message += `└ Skipped: ${stats.skipped}\n\n`;
+
+    if (Object.keys(stats.byType).length > 0) {
+      message += `📋 *By Content Type:*\n`;
+      for (const [type, count] of Object.entries(stats.byType)) {
+        message += `├ ${type}: ${count}\n`;
+      }
+      message += '\n';
+    }
+
+    // Show next slots for today/tomorrow
+    const today = new Date().getDay();
+    const tomorrow = (today + 1) % 7;
+    const todaySlots = schedule.byDay[calendar.DAY_NAMES[today]] || [];
+    const tomorrowSlots = schedule.byDay[calendar.DAY_NAMES[tomorrow]] || [];
+
+    if (todaySlots.length > 0) {
+      message += `🕐 *Today (${calendar.DAY_NAMES[today]}):*\n`;
+      for (const slot of todaySlots) {
+        message += `├ ${slot.time} - ${slot.platform} (${slot.contentType})\n`;
+      }
+      message += '\n';
+    }
+
+    if (tomorrowSlots.length > 0) {
+      message += `🕐 *Tomorrow (${calendar.DAY_NAMES[tomorrow]}):*\n`;
+      for (const slot of tomorrowSlots) {
+        message += `├ ${slot.time} - ${slot.platform} (${slot.contentType})\n`;
+      }
+      message += '\n';
+    }
+
+    // Show pending items
+    if (pending.length > 0) {
+      message += `📋 *Pending Items:*\n`;
+      for (const item of pending.slice(0, 5)) {
+        const typeEmoji = item.contentType === 'IMAGE' ? '🖼️' : item.contentType === 'CAROUSEL' ? '🎠' : '🎬';
+        message += `${typeEmoji} ${item.contentType} - ${item.platform}\n`;
+        message += `   ID: \`${item.id.substring(0, 8)}...\``;
+        if (item.scheduledFor) {
+          message += ` | 🕐 ${new Date(item.scheduledFor).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`;
+        }
+        message += '\n';
+      }
+      if (pending.length > 5) {
+        message += `... +${pending.length - 5} more\n`;
+      }
+      message += '\n';
+    }
+
+    message += `💡 *Commands:*\n`;
+    message += `• /queueset [platform] [day] [time] [type] - Set schedule\n`;
+    message += `• /queueprocess - Assign times to queue\n`;
+    message += `• /queueclear - Clear pending queue`;
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    console.error('[Queue] Error:', error);
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /queueset - Set posting schedule
+bot.command('queueset', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    const helpText = `
+📅 *SET POSTING SCHEDULE*
+
+Usage:
+• /queueset [platform] [day] [time] [type]
+
+Examples:
+• /queueset INSTAGRAM Monday 08:00 IMAGE
+• /queueset TIKTOK Tuesday 18:00 CAROUSEL
+• /queueset INSTAGRAM Friday 12:00 VIDEO
+
+Days: Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday
+Time: HH:MM format
+Types: IMAGE, CAROUSEL, VIDEO
+Platforms: INSTAGRAM, TIKTOK, FACEBOOK
+    `;
+    await ctx.reply(helpText, { parse_mode: 'Markdown' });
+    return;
+  }
+
+  // Parse args
+  const parts = args.split(/\s+/);
+  if (parts.length < 4) {
+    await ctx.reply('❌ Invalid format. Use: /queueset [platform] [day] [time] [type]');
+    return;
+  }
+
+  const platform = parts[0].toUpperCase();
+  const dayStr = parts[1].toLowerCase();
+  const timeStr = parts[2];
+  const contentType = parts[3].toUpperCase();
+
+  // Validate platform
+  const validPlatforms = ['INSTAGRAM', 'TIKTOK', 'FACEBOOK', 'ALL'];
+  if (!validPlatforms.includes(platform)) {
+    await ctx.reply(`❌ Invalid platform. Use: ${validPlatforms.join(', ')}`);
+    return;
+  }
+
+  // Validate day
+  const dayMap: Record<string, number> = {
+    sunday: 0, sun: 0,
+    monday: 1, mon: 1,
+    tuesday: 2, tue: 2,
+    wednesday: 3, wed: 3,
+    thursday: 4, thu: 4,
+    friday: 5, fri: 5,
+    saturday: 6, sat: 6,
+  };
+  const dayOfWeek = dayMap[dayStr];
+  if (dayOfWeek === undefined) {
+    await ctx.reply('❌ Invalid day. Use: Sunday, Monday, Tuesday, etc.');
+    return;
+  }
+
+  // Validate time
+  const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!timeMatch) {
+    await ctx.reply('❌ Invalid time. Use HH:MM format (e.g., 08:00, 18:30)');
+    return;
+  }
+  const hour = parseInt(timeMatch[1]);
+  const minute = parseInt(timeMatch[2]);
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    await ctx.reply('❌ Invalid time. Hour must be 0-23, minute must be 0-59');
+    return;
+  }
+
+  // Validate content type
+  const validTypes = ['IMAGE', 'CAROUSEL', 'VIDEO'];
+  if (!validTypes.includes(contentType)) {
+    await ctx.reply(`❌ Invalid type. Use: ${validTypes.join(', ')}`);
+    return;
+  }
+
+  // Set the schedule
+  const result = await calendar.setScheduleSlot(platform, dayOfWeek, hour, minute, contentType);
+
+  if (result.success) {
+    const dayName = calendar.DAY_NAMES[dayOfWeek];
+    const timeFormatted = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    await ctx.reply(`✅ *Schedule Set!*
+
+📅 ${dayName} at ${timeFormatted}
+📱 Platform: ${platform}
+🖼️ Type: ${contentType}
+
+Use /queue to view all schedules.`);
+  } else {
+    await ctx.reply(`❌ Failed to set schedule: ${result.error}`);
+  }
+});
+
+// /queueclear - Clear pending queue
+bot.command('queueclear', async (ctx) => {
+  try {
+    const telegramId = String(ctx.from?.id || '');
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
+    const brandId = session?.activeBrandId || undefined;
+
+    const result = await calendar.clearQueue(brandId);
+
+    if (result.success) {
+      await ctx.reply(`✅ *Queue Cleared*
+
+Deleted ${result.deleted} pending items from queue.`);
+    } else {
+      await ctx.reply(`❌ Failed to clear queue: ${result.error}`);
+    }
   } catch (error: any) {
     await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
 
-// /renderstatus - Quick render stats
-bot.command('renderstatus', async (ctx) => {
+// /queueprocess - Process queue and assign times
+bot.command('queueprocess', async (ctx) => {
   try {
-    const [total, queued, processing, completed, failed] = await Promise.all([
-      prisma.renderJob.count(),
-      prisma.renderJob.count({ where: { status: 'queued' } }),
-      prisma.renderJob.count({ where: { status: 'processing' } }),
-      prisma.renderJob.count({ where: { status: 'completed' } }),
-      prisma.renderJob.count({ where: { status: 'failed' } }),
-    ]);
+    const telegramId = String(ctx.from?.id || '');
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
+    const brandId = session?.activeBrandId || undefined;
 
-    await ctx.reply(`
-📊 *Render Queue Status*
+    await ctx.reply('⏳ Processing queue...');
 
-🎬 Total: ${total}
-⏳ Queued: ${queued}
-🔄 Processing: ${processing}
-✅ Completed: ${completed}
-❌ Failed: ${failed}
-`, { parse_mode: 'Markdown' });
+    const result = await calendar.processQueue(brandId);
 
-  } catch (error) {
-    await ctx.reply('❌ Error fetching stats');
+    if (result.errors.length === 0) {
+      await ctx.reply(`✅ *Queue Processed!*
+
+📋 Processed: ${result.processed}
+📅 Scheduled: ${result.scheduled}
+❌ Errors: ${result.errors.length}
+
+Use /queue to view updated schedule.`);
+    } else {
+      await ctx.reply(`⚠️ *Queue Processed with Errors*
+
+📋 Processed: ${result.processed}
+📅 Scheduled: ${result.scheduled}
+❌ Errors: ${result.errors.length}
+
+${result.errors.slice(0, 3).join('\n')}`);
+    }
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /pippit - PIPPIT MANUAL WORKFLOW
+// Shows Pippit manual queue and creates WAITING_UPLOAD folder
+bot.command('pippit', async (ctx) => {
+  try {
+    const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+    const contentId = args || null;
+
+    // If contentId provided, generate files for that content
+    if (contentId) {
+      await generateWaitingUploadFolder(ctx, contentId);
+      return;
+    }
+
+    // Otherwise show status
+    await showPippitStatus(ctx);
+
+  } catch (error: any) {
+    console.error('[Pippit] Error:', error);
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// Generate WAITING_UPLOAD folder for content
+async function generateWaitingUploadFolder(ctx: any, contentId: string) {
+  const content = await prisma.content.findUnique({
+    where: { id: contentId },
+    include: {
+      product: true,
+      qualityScores: true,
+      contentVariants: { orderBy: { variantIndex: 'asc' } },
+      videoPrompts: true,
+    },
+  });
+
+  if (!content) {
+    await ctx.reply(`❌ Content not found: ${contentId.substring(0, 8)}...`);
+    return;
+  }
+
+  const quality = content.qualityScores?.[0];
+  const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
+  const captions = content.contentVariants.filter(v => v.variantType === 'CAPTION');
+  const pippitPrompt = content.videoPrompts?.find(p => p.tool === 'PIPPIT');
+
+  // Create folder
+  const folderName = `WAITING_UPLOAD_${contentId.substring(0, 8)}_${content.product.slug}`;
+  const tempDir = os.tmpdir();
+  const folderPath = path.join(tempDir, folderName);
+
+  fs.mkdirSync(folderPath, { recursive: true });
+
+  // 1. README.txt
+  const readme = `PIPPIT MANUAL VIDEO CREATION PACKAGE
+============================================
+
+CONTENT ID: ${contentId}
+PRODUCT: ${content.product.name}
+PRICE: Rp ${Number(content.product.price || 0).toLocaleString('id-ID')}
+LINK: ${content.product.affiliateLink}
+
+QUALITY SCORE: ${quality?.overallScore || 'N/A'}/100
+BEST PLATFORM: ${quality?.bestPlatform || 'TikTok'}
+
+INSTRUCTIONS
+============
+1. Open this folder
+2. Copy pippit-prompt.txt
+3. Go to pippit.ai or Pippit dashboard
+4. Paste the prompt
+5. Set duration: ${pippitPrompt?.duration || 30}s
+6. Set format: ${pippitPrompt?.format || '9:16'} (TikTok/Shorts)
+7. Generate video
+8. Download MP4
+9. Upload to Google Drive/Dropbox
+10. Come back here and send:
+   /attachvideo ${contentId} [cloud_video_url]
+`;
+
+  fs.writeFileSync(path.join(folderPath, 'README.txt'), readme);
+
+  // 2. pippit-prompt.txt
+  const promptText = pippitPrompt?.prompt || quality?.bestHook || content.hook || hooks[0]?.contentValue || 'Create engaging product video';
+  const promptFile = `PIPPIT PROMPT - COPY THIS
+=======================
+
+${promptText}
+${content.script ? '\nSCRIPT:\n' + content.script : ''}
+${pippitPrompt?.duration ? '\nDURATION: ' + pippitPrompt.duration + ' seconds' : ''}
+${pippitPrompt?.format ? '\nFORMAT: ' + pippitPrompt.format : ''}
+${content.tone ? '\nTONE: ' + content.tone : ''}`;
+
+  fs.writeFileSync(path.join(folderPath, 'pippit-prompt.txt'), promptFile);
+
+  // 3. script.txt
+  const scriptFile = `VIDEO SCRIPT
+============
+
+HOOK (first 3 seconds):
+${quality?.bestHook || hooks[0]?.contentValue || ''}
+
+SCRIPT:
+${content.script || ''}
+
+PRODUCT: ${content.product.name}
+PRICE: Rp ${Number(content.product.price || 0).toLocaleString('id-ID')}
+LINK: ${content.product.affiliateLink}
+
+CALL TO ACTION:
+${quality?.bestCta || content.cta || 'Klik link di bio untuk order!'}
+`;
+
+  fs.writeFileSync(path.join(folderPath, 'script.txt'), scriptFile);
+
+  // 4. voiceover.txt
+  const voiceoverFile = `VOICEOVER SCRIPT
+================
+
+${pippitPrompt?.voiceOver || content.script || ''}
+
+ALTERNATIVE HOOKS:
+${hooks.slice(0, 3).map((h, i) => `${i + 1}. ${h.contentValue}`).join('\n\n')}`;
+
+  fs.writeFileSync(path.join(folderPath, 'voiceover.txt'), voiceoverFile);
+
+  // 5. subtitle.txt
+  const subtitleFile = `SUBTITLE/CAPTION OVERLAY
+========================
+
+KEY TEXT TO DISPLAY:
+${quality?.bestHook || hooks[0]?.contentValue || ''}
+
+TIMING:
+0-3s:  HOOK (big text)
+3-10s: Product intro + price
+10-20s: Benefits
+20-27s: Social proof
+27-30s: CTA + price reminder
+
+FONT: Bold, white text, dark outline`;
+
+  fs.writeFileSync(path.join(folderPath, 'subtitle.txt'), subtitleFile);
+
+  // 6. caption.txt
+  const captionFile = `POST CAPTION
+============
+
+${quality?.bestCaption || captions[0]?.contentValue || content.caption || ''}
+
+ALTERNATIVE CAPTIONS:
+${captions.slice(0, 3).map((c, i) => `${i + 1}. ${c.contentValue}`).join('\n\n')}`;
+
+  fs.writeFileSync(path.join(folderPath, 'caption.txt'), captionFile);
+
+  // 7. hashtags.txt
+  const hashtagFile = `HASHTAGS
+=========
+
+${content.hashtags || ''}
+
+RECOMMENDED:
+#ProdukIndonesia #ShopeeIndonesia #TikTokShop
+#Trending #Viral #FYP #ForYou
+#2024 #Challenge`;
+
+  fs.writeFileSync(path.join(folderPath, 'hashtags.txt'), hashtagFile);
+
+  // Reply with confirmation and instructions
+  await ctx.reply(`✅ *WAITING_UPLOAD FOLDER CREATED*
+
+📁 Folder: ${folderName}
+
+📄 Files created:
+• README.txt - Instructions
+• pippit-prompt.txt - Pippit prompt
+• script.txt - Video script
+• voiceover.txt - Voiceover guide
+• subtitle.txt - Subtitle overlay
+• caption.txt - Post caption
+• hashtags.txt - Hashtags
+
+📍 Location: ${folderPath}
+
+📋 *NEXT STEPS:*
+1. Go to Pippit website
+2. Generate video using the prompt
+3. Download MP4
+4. Upload to Google Drive/Dropbox
+5. Send me the cloud URL:
+   \`/attachvideo ${contentId} [cloud_video_url]\``,
+    { parse_mode: 'Markdown' }
+  );
+}
+
+// Show PIPPIT workflow status
+async function showPippitStatus(ctx: any) {
+  // Get PIPPIT_MANUAL distribution items
+  const pippitItems = await prisma.distributionQueue.findMany({
+    where: { provider: 'PIPPIT_MANUAL' },
+    orderBy: { createdAt: 'desc' },
+    include: { brand: true, product: true },
+  });
+
+  const draftItems = pippitItems.filter(i => i.status === 'DRAFT');
+  const readyItems = pippitItems.filter(i => i.status === 'READY');
+  const queuedItems = pippitItems.filter(i => i.status === 'QUEUED');
+  const postedItems = pippitItems.filter(i => i.status === 'POSTED_CONFIRMED');
+
+  let message = `🎬 *PIPPIT MANUAL WORKFLOW*\n\n`;
+
+  message += `📊 *Status*\n`;
+  message += `├ Draft: ${draftItems.length}\n`;
+  message += `├ Ready: ${readyItems.length}\n`;
+  message += `├ Queued: ${queuedItems.length}\n`;
+  message += `└ Posted: ${postedItems.length}\n\n`;
+
+  // Draft items needing upload
+  if (draftItems.length > 0) {
+    message += `📤 *WAITING UPLOAD*\n`;
+    for (const item of draftItems.slice(0, 5)) {
+      message += `• ${item.product?.name || 'N/A'}\n`;
+      message += `  ID: \`${item.id.substring(0, 12)}...\`\n`;
+    }
+    message += '\n';
+  }
+
+  // Ready items
+  if (readyItems.length > 0) {
+    message += `✅ *READY FOR ZERNIO*\n`;
+    for (const item of readyItems.slice(0, 5)) {
+      message += `• ${item.product?.name || 'N/A'}\n`;
+      message += `  Video: ${item.videoUrl ? 'Uploaded ✓' : 'Missing ✗'}\n`;
+    }
+    message += '\n';
+  }
+
+  message += `📋 *WORKFLOW*\n`;
+  message += `\`\`\`\n`;
+  message += `1. /add [link] - Add product\n`;
+  message += `2. Approve content\n`;
+  message += `3. /pippit [contentId] - Create folder\n`;
+  message += `4. Generate video at pippit.ai\n`;
+  message += `5. Upload MP4 to cloud\n`;
+  message += `6. /attachvideo [contentId] [cloudUrl]\n`;
+  message += `7. Zernio posts to TikTok\n`;
+  message += `\`\`\`\n\n`;
+
+  message += `💡 *Usage:*\n`;
+  message += `• \`/pippit [contentId]\` - Create upload folder\n`;
+  message += `• \`/attachvideo [id] [url]\` - Attach video\n`;
+  message += `• \`/pippit\` - Show status`;
+
+  await ctx.reply(message, { parse_mode: 'Markdown' });
+}
+
+// /attachvideo - Attach video URL to distribution item
+bot.command('attachvideo', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    await ctx.reply(`📎 *Usage:* /attachvideo [contentId] [cloudVideoUrl]
+
+Example:
+\`/attachvideo abc123def... https://drive.google.com/file/d/xxx\`
+
+This marks the distribution as READY for Zernio posting.`);
+    return;
+  }
+
+  const parts = args.match(/^(\S+)\s+(.+)$/);
+  if (!parts) {
+    await ctx.reply(`❌ Invalid format. Use: /attachvideo [contentId] [cloudUrl]`);
+    return;
+  }
+
+  const contentId = parts[1];
+  const cloudUrl = parts[2];
+
+  try {
+    // Find distribution item by contentId
+    const distItem = await prisma.distributionQueue.findFirst({
+      where: {
+        productId: contentId,
+        provider: 'PIPPIT_MANUAL',
+        status: 'DRAFT',
+      },
+      include: { brand: true, product: true },
+    });
+
+    if (!distItem) {
+      await ctx.reply(`❌ No PIPPIT_MANUAL distribution found for content ID: ${contentId.substring(0, 12)}...`);
+      return;
+    }
+
+    // Update with video URL
+    await prisma.distributionQueue.update({
+      where: { id: distItem.id },
+      data: {
+        videoUrl: cloudUrl,
+        status: 'READY',
+      },
+    });
+
+    await ctx.reply(`✅ *VIDEO ATTACHED*
+
+📦 Product: ${distItem.product?.name || 'N/A'}
+🎬 Brand: ${distItem.brand?.name || 'N/A'}
+🔗 URL: ${cloudUrl.substring(0, 50)}...
+
+📊 Status changed: DRAFT → READY
+
+⏳ Video is now queued for Zernio posting.
+🔄 Use /showflow to monitor progress.`);
+
+  } catch (error: any) {
+    console.error('[AttachVideo] Error:', error);
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /zerniostatus - Check Zernio post status
+bot.command('zerniostatus', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    await ctx.reply(`📎 *Usage:* /zerniostatus [postId]
+
+Example:
+\`/zerniostatus 6a2173e52511e72140ab6e45\`
+
+This checks the actual Zernio status for a post and compares with local DB.`);
+    return;
+  }
+
+  const postId = args;
+
+  await ctx.reply(`⏳ Checking Zernio status for: \`${postId}\``);
+
+  try {
+    // Get brand context
+    const telegramId = String(ctx.from?.id || '');
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
+
+    // Get API key based on brand
+    let apiKey: string | null = null;
+    if (session?.activeBrandSlug) {
+      const slug = session.activeBrandSlug.toLowerCase();
+      if (slug.includes('cepat') || slug.includes('dapat')) {
+        apiKey = process.env.ZERNIO_CEPAT_KEY_1 || null;
+      } else if (slug.includes('crypto') || slug.includes('ew')) {
+        apiKey = process.env.ZERNIO_CRYPTO_KEY_1 || null;
+      }
+    }
+
+    // Fallback to CEPAT key
+    if (!apiKey) {
+      apiKey = process.env.ZERNIO_CEPAT_KEY_1 || null;
+    }
+
+    if (!apiKey) {
+      await ctx.reply('❌ No Zernio API key configured');
+      return;
+    }
+
+    // Check Zernio API
+    const response = await fetch(`https://api.zernio.com/v1/posts/${postId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+
+    if (!response.ok) {
+      await ctx.reply(`❌ Zernio API error: ${response.status}`);
+      return;
+    }
+
+    const data: any = await response.json();
+    const post = data.post || data;
+
+    // Check local DB
+    const localItem = await prisma.distributionQueue.findFirst({
+      where: { postId },
+      include: { brand: true }
+    });
+
+    // Build response
+    let message = `🔍 *ZERNIO POST STATUS*\n\n`;
+
+    message += `*Zernio Response:*\n`;
+    message += `├ Status: \`${post.status || 'unknown'}\`\n`;
+    message += `├ Post ID: \`${post._id || postId}\`\n`;
+    message += `├ Platforms: ${JSON.stringify(post.platforms || [])}\n`;
+    message += `├ Media Items: ${post.mediaItems?.length || 0}\n`;
+    message += `├ publishAttempts: ${post.publishAttempts || 0}\n`;
+    message += `└ scheduledFor: ${post.scheduledFor || 'not set'}\n\n`;
+
+    message += `*Post URL:*\n`;
+    message += `${post.url || '⚠️ NOT AVAILABLE (draft only)'}\n\n`;
+
+    if (localItem) {
+      message += `*Local Database:*\n`;
+      message += `├ Distribution ID: \`${localItem.id.substring(0, 12)}...\`\n`;
+      message += `├ DB Status: \`${localItem.status}\`\n`;
+      message += `├ Local postUrl: ${localItem.postUrl || 'none'}\n`;
+      message += `├ postedAt: ${localItem.postedAt || 'not set'}\n`;
+      message += `└ scheduledAt: ${localItem.scheduledAt || 'not set'}\n\n`;
+
+      // Status comparison
+      const zernioStatus = post.status?.toUpperCase();
+      const localStatus = localItem.status;
+
+      message += `*Status Comparison:*\n`;
+      message += `├ Zernio: \`${zernioStatus}\`\n`;
+      message += `└ Local: \`${localStatus}\`\n\n`;
+
+      if (zernioStatus === 'PUBLISHED' && localStatus !== 'POSTED_CONFIRMED') {
+        message += `⚠️ *MISMATCH:* Zernio shows published but DB doesn't!\n`;
+        message += `💡 Run: /confirmpost ${localItem.id}\n`;
+      } else if (zernioStatus === 'DRAFT' && localStatus === 'POSTED_CONFIRMED') {
+        message += `❌ *ERROR:* DB shows posted but Zernio is still draft!\n`;
+      } else if (zernioStatus === 'DRAFT' && !post.url) {
+        message += `⚠️ *NOT PUBLISHED:* Post is still in draft status.\n`;
+        message += `💡 Check Zernio dashboard to publish/schedule manually.\n`;
+      } else if (zernioStatus === 'PUBLISHED' || post.url) {
+        message += `✅ *CONFIRMED:* Post is actually published!\n`;
+      }
+    } else {
+      message += `*Local Database:*\n`;
+      message += `└ No distribution item found for this postId\n`;
+    }
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    console.error('[ZernioStatus] Error:', error);
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /schedule - Schedule a Zernio draft for future publishing
+bot.command('schedule', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
+
+  if (!args) {
+    await ctx.reply(`📎 *Schedule Zernio Draft*
+
+Usage:
+• /schedule [distributionId] [datetime]
+
+Examples:
+• /schedule abc123def 2026-06-05 10:00
+• /schedule abc123def tomorrow 14:00
+• /schedule abc123def +2h
+
+Find distribution ID from /showflow output.
+
+⚠️ Draft must exist in Zernio first.`);
+    return;
+  }
+
+  // Parse args: distributionId and datetime
+  const parts = args.match(/^(\S+)\s+(.+)$/);
+  if (!parts) {
+    await ctx.reply(`❌ Invalid format. Use: /schedule [distributionId] [datetime]`);
+    return;
+  }
+
+  const distributionId = parts[1];
+  const datetimeStr = parts[2];
+
+  // Parse datetime
+  let scheduledDate: Date;
+  const datetimeLower = datetimeStr.toLowerCase();
+
+  if (datetimeLower === 'tomorrow') {
+    scheduledDate = new Date();
+    scheduledDate.setDate(scheduledDate.getDate() + 1);
+    scheduledDate.setHours(10, 0, 0, 0);
+  } else if (datetimeLower.startsWith('+')) {
+    // Relative time like +2h, +30m
+    const match = datetimeLower.match(/\+(\d+)(h|m|d)/);
+    if (match) {
+      const amount = parseInt(match[1]);
+      const unit = match[2];
+      scheduledDate = new Date();
+      if (unit === 'm') scheduledDate.setMinutes(scheduledDate.getMinutes() + amount);
+      else if (unit === 'h') scheduledDate.setHours(scheduledDate.getHours() + amount);
+      else if (unit === 'd') scheduledDate.setDate(scheduledDate.getDate() + amount);
+    } else {
+      await ctx.reply(`❌ Invalid relative time. Use: +1h, +30m, +1d`);
+      return;
+    }
+  } else {
+    // Try to parse as date string
+    try {
+      scheduledDate = new Date(datetimeStr);
+      if (isNaN(scheduledDate.getTime())) {
+        throw new Error('Invalid date');
+      }
+    } catch {
+      await ctx.reply(`❌ Invalid datetime format. Try:
+• 2026-06-05 10:00
+• tomorrow 14:00
+• +2h (2 hours from now)`);
+      return;
+    }
+  }
+
+  // Must be in the future
+  if (scheduledDate.getTime() <= Date.now()) {
+    await ctx.reply(`❌ Scheduled time must be in the future.`);
+    return;
+  }
+
+  await ctx.reply(`⏳ Scheduling draft ${distributionId.substring(0, 8)}... for ${scheduledDate.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
+
+  try {
+    // Import distribution service
+    const { scheduleDraft } = await import('../services/distribution');
+
+    const result = await scheduleDraft(distributionId, scheduledDate);
+
+    if (result.success) {
+      await ctx.reply(`✅ *Post Scheduled!*
+
+📋 Distribution ID: \`${distributionId.substring(0, 8)}...\`
+🕐 Scheduled for: ${scheduledDate.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}
+🔗 Zernio Post ID: \`${result.scheduledPostId?.substring(0, 12)}...\`
+
+Zernio will auto-publish at the scheduled time.`, { parse_mode: 'Markdown' });
+    } else {
+      await ctx.reply(`❌ *Scheduling Failed*
+
+Error: ${result.error}
+
+Make sure:
+• Distribution has a Zernio draft (status: ZERNIO_DRAFT_CREATED)
+• Video/image is attached`);
+    }
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
+  }
+});
+
+// /storage - Storage status
+bot.command('storage', async (ctx) => {
+  try {
+    const { testGoogleDriveConnection, getGoogleDriveStorageInfo, isGoogleDriveConfigured, getConfiguredProviders } = await import('../services/cloud-storage');
+
+    const googleResult = await testGoogleDriveConnection();
+    const providers = getConfiguredProviders();
+    const localProvider = providers.find(p => p.provider === 'LOCAL');
+
+    // Get temp files count
+    const tempDir = process.env.LOCAL_TEMP_DIR || './tmp';
+    let tempFiles = 0;
+    let tempSize = 0;
+
+    try {
+      if (require('fs').existsSync(tempDir)) {
+        const files = require('fs').readdirSync(tempDir);
+        tempFiles = files.length;
+        for (const file of files) {
+          try {
+            const stats = require('fs').statSync(require('path').join(tempDir, file));
+            tempSize += stats.size;
+          } catch {}
+        }
+      }
+    } catch {}
+
+    const formatBytes = (bytes: number) => {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    };
+
+    let message = `📦 *STORAGE STATUS*\n\n`;
+
+    // Provider status
+    message += `🔧 *Cloud Storage Provider*\n`;
+    message += `├ Google Drive: ${googleResult.connected ? '✅ Connected' : '❌ Not Configured'}\n`;
+    message += `├ Dropbox: ${providers.find(p => p.provider === 'DROPBOX')?.configured ? '✅ Configured' : '❌ Not Configured'}\n`;
+    message += `└ Local Temp: ${localProvider?.configured ? '✅ Active' : '❌ Disabled'}\n\n`;
+
+    // Google Drive details
+    if (googleResult.connected) {
+      message += `📁 *Google Drive*\n`;
+      message += `├ Status: ✅ Connected\n`;
+      message += `├ ${googleResult.message}\n`;
+      message += `└ Folder: AI-Affiliate-Engine/\n`;
+    } else {
+      message += `📁 *Google Drive*\n`;
+      message += `├ Status: ❌ Not configured\n`;
+      message += `├ Will create: AI-Affiliate-Engine/Crypto-EW\n`;
+      message += `└ Will create: AI-Affiliate-Engine/Pippit-Manual\n`;
+    }
+
+    message += `\n📂 *Local Temp (Cache)*\n`;
+    message += `├ Files: ${tempFiles}\n`;
+    message += `├ Size: ${formatBytes(tempSize)}\n`;
+    message += `└ Auto Cleanup: ON\n`;
+
+    // Next steps
+    if (!googleResult.connected) {
+      message += `\n\n💡 *To enable Google Drive:*\n`;
+      message += `1. Add GOOGLE_CLIENT_ID to .env\n`;
+      message += `2. Add GOOGLE_CLIENT_SECRET to .env\n`;
+      message += `3. Run: npm run setup:google-drive\n`;
+      message += `4. Authorize with Google account\n`;
+      message += `5. Folders will be created automatically\n`;
+    }
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+  } catch (error: any) {
+    await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
 
@@ -1061,379 +1935,187 @@ bot.command('renderstatus', async (ctx) => {
 // CALLBACK HANDLERS
 // ============================================
 
-bot.on('callback_query', async (ctx) => {
-  const data = ctx.callbackQuery.data;
+import { executeApprovalPipeline, executeDistributionPipeline, getContentPipelineStatus } from '../services/approval-pipeline';
+
+bot.callbackQuery(/^appr_(.+)$/, async (ctx) => {
+  const contentId = ctx.match[1];
+  const telegramId = String(ctx.from?.id || '');
 
   try {
-    // Approve
-    if (data.startsWith('appr_')) {
-      const contentId = data.replace('appr_', '');
+    // Get current session for brand info
+    const session = await prisma.telegramSession.findUnique({
+      where: { telegramId },
+    });
 
-      await prisma.content.update({
-        where: { id: contentId },
-        data: {
-          approvalStatus: 'APPROVED',
-          approvedAt: new Date(),
-          approvedBy: ctx.from.username || 'admin',
-        },
-      });
+    console.log(`[Approval] User ${telegramId} approving content ${contentId}`);
+    console.log(`[Approval] Active brand: ${session?.activeBrandSlug || 'none'}`);
 
-      await prisma.approvalLog.create({
-        data: {
-          contentId,
-          action: 'APPROVED',
-          actionBy: ctx.from.username || 'admin',
-        },
-      });
+    // Execute the approval pipeline
+    const result = await executeApprovalPipeline(contentId, {
+      autoApprove: true,
+      provider: 'HIGGSFIELD_AUTO',
+      platform: 'TIKTOK',
+      brandId: session?.activeBrandId || undefined,
+    });
 
-      await ctx.answerCallbackQuery('✅ Approved!');
-      await ctx.reply('✅ Content approved! Ready for scheduling.');
+    await ctx.answerCallbackQuery(result.success ? '✅ Pipeline started!' : '⚠️ ' + (result.error || 'Check logs'));
+
+    // Build response message
+    let response = result.success
+      ? `✅ *Content Approved!*\n\n📋 Pipeline Steps:\n`
+      : `❌ *Approval Failed*\n\n`;
+
+    for (const step of result.steps) {
+      response += `${step}\n`;
     }
 
-    // Reject
-    if (data.startsWith('rejt_')) {
-      const contentId = data.replace('rejt_', '');
+    if (result.success) {
+      response += `\n📊 *Summary:*\n`;
+      response += `• Production Package: ${result.productionPackageId || 'N/A'}\n`;
+      response += `• Render Jobs: ${result.renderJobIds?.length || 0}\n`;
+      response += `• Distribution: ${result.distributionItemId || 'N/A'}\n`;
 
-      await prisma.content.update({
-        where: { id: contentId },
-        data: {
-          approvalStatus: 'REJECTED',
-          rejectedAt: new Date(),
-          rejectionReason: 'Rejected via Telegram',
-        },
-      });
-
-      await ctx.answerCallbackQuery('❌ Rejected!');
-      await ctx.reply('❌ Content rejected.');
-    }
-
-    // Package Ready
-    if (data.startsWith('pkg_ready_')) {
-      const pkgId = data.replace('pkg_ready_', '');
-      await prisma.productionPackage.update({
-        where: { id: pkgId },
-        data: { status: 'production_ready' },
-      });
-      await ctx.answerCallbackQuery('✅ Marked Ready!');
-      await ctx.reply('✅ Package marked as production ready.');
-    }
-
-    // Package Rendered
-    if (data.startsWith('pkg_rendered_')) {
-      const pkgId = data.replace('pkg_rendered_', '');
-      await prisma.productionPackage.update({
-        where: { id: pkgId },
-        data: { status: 'rendered', renderedAt: new Date() },
-      });
-      await ctx.answerCallbackQuery('🟣 Marked Rendered!');
-      await ctx.reply('🟣 Package marked as rendered.');
-    }
-
-    // Package Export
-    if (data.startsWith('pkg_export_')) {
-      const pkgId = data.replace('pkg_export_', '');
-      await ctx.answerCallbackQuery('📤 Exporting...');
-
-      const pkg = await prisma.productionPackage.findUnique({
-        where: { id: pkgId },
-        include: { product: true, content: true },
-      });
-
-      if (pkg) {
-        await prisma.productionPackage.update({
-          where: { id: pkgId },
-          data: { exportedAt: new Date() },
-        });
-
-        await ctx.reply(`📤 *Export Ready!*\n\nProduct: ${pkg.product.name}\nPlatform: ${pkg.bestPlatform}\n\nAll production assets are ready to use.`);
+      if (result.distributionItemId) {
+        response += `\n🔄 Distribution queued for processing`;
       }
     }
 
-    // Package Regenerate
-    if (data.startsWith('pkg_regen_')) {
-      const pkgId = data.replace('pkg_regen_', '');
-      await ctx.answerCallbackQuery('🔄 Regenerating...');
+    await ctx.reply(response, { parse_mode: 'Markdown' });
 
-      const existing = await prisma.productionPackage.findUnique({
-        where: { id: pkgId },
-        include: { content: { include: { qualityScores: { take: 1 } } }, product: true },
-      });
-
-      if (existing && existing.content) {
-        const { generateProductionPrompts } = await import('../lib/openai-content');
-
-        const prompts = await generateProductionPrompts({
-          productName: existing.product.name,
-          productDescription: existing.product.description || '',
-          productPrice: Number(existing.product.price),
-          bestHook: existing.content.qualityScores?.[0]?.bestHook || existing.content.hook,
-          bestCaption: existing.content.qualityScores?.[0]?.bestCaption || existing.content.caption,
-          bestCta: existing.content.qualityScores?.[0]?.bestCta || existing.content.cta,
-        });
-
-        await prisma.productionPackage.update({
-          where: { id: pkgId },
-          data: {
-            videoPromptPippit: prompts.videoPromptPippit,
-            videoPromptVeo: prompts.videoPromptVeo,
-            videoPromptSeedance: prompts.videoPromptSeedance,
-            videoPromptSora: prompts.videoPromptSora,
-            imagePromptThumbnail: prompts.imagePromptThumbnail,
-            imagePromptSocial: prompts.imagePromptSocial,
-            imagePromptCarousel: prompts.imagePromptCarousel,
-            imagePromptAd: prompts.imagePromptAd,
-            voiceoverScript: prompts.voiceoverScript,
-            subtitleScript: prompts.subtitleScript,
-          },
-        });
-
-        await ctx.reply('🔄 Production package regenerated!');
-      }
-    }
-      });
-
-      await ctx.answerCallbackQuery('❌ Rejected!');
-      await ctx.reply('❌ Content rejected.');
-    }
-
-    // View content
-    if (data.startsWith('view_')) {
-      const contentId = data.replace('view_', '');
-
-      const content = await prisma.content.findUnique({
-        where: { id: contentId },
-        include: {
-          product: true,
-          qualityScore: true,
-          contentVariants: { orderBy: { variantIndex: 'asc' } },
-        },
-      });
-
-      if (content) {
-        const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
-        const quality = content.qualityScore;
-
-        let reply = `📝 *${content.product.name}*\n\n`;
-        reply += `📈 Quality: ${quality?.overallScore || 0}/100\n`;
-        reply += `📝 Hooks: ${hooks.length} variants\n\n`;
-        reply += `*Best Hook:*\n${truncate(quality?.bestHook || content.hook || '', 100)}\n\n`;
-        reply += `Status: ${content.approvalStatus}`;
-
-        await ctx.answerCallbackQuery();
-        await ctx.reply(reply, {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '✅ Approve', callback_data: `appr_${content.id}` },
-                { text: '❌ Reject', callback_data: `rejt_${content.id}` },
-              ]
-            ]
-          }
-        });
-      }
-    }
-
-    // Generate Phase 2 for product
-    if (data.startsWith('gen2_')) {
-      const productId = data.replace('gen2_', '');
-
-      await ctx.answerCallbackQuery('⏳ Generating...');
-
-      const product = await prisma.product.findUnique({ where: { id: productId } });
-      if (!product) {
-        await ctx.reply('❌ Produk tidak ditemukan');
-        return;
-      }
-
-      const contentPack = await generatePhase2Content({
-        productName: product.name,
-        productDescription: product.description || '',
-        productPrice: Number(product.price),
-        productCategory: product.category,
-      });
-
-      const content = await prisma.content.create({
-        data: {
-          productId: product.id,
-          contentType: 'PHASE2_FULL',
-          platform: 'ALL',
-          hook: contentPack.hooks[0],
-          caption: contentPack.captions[0],
-          hashtags: contentPack.hashtags.slice(0, 30).join(','),
-          cta: contentPack.ctas[0],
-          telegramText: contentPack.telegramText,
-          whatsappText: contentPack.whatsappText,
-          status: 'DRAFT',
-          approvalStatus: 'PENDING',
-        },
-      });
-
-      // Create variants
-      const variantPromises: any[] = [];
-      contentPack.hooks.forEach((hook, index) => {
-        variantPromises.push(prisma.contentVariant.create({
-          data: {
-            contentId: content.id,
-            variantType: 'HOOK',
-            variantIndex: index + 1,
-            contentValue: hook,
-          },
-        }));
-      });
-      contentPack.captions.forEach((caption, index) => {
-        variantPromises.push(prisma.contentVariant.create({
-          data: {
-            contentId: content.id,
-            variantType: 'CAPTION',
-            variantIndex: index + 1,
-            contentValue: caption,
-          },
-        }));
-      });
-      await Promise.all(variantPromises);
-
-      await prisma.qualityScore.create({
-        data: {
-          contentId: content.id,
-          hookScore: contentPack.qualityScores.hookScore,
-          clarityScore: contentPack.qualityScores.clarityScore,
-          conversionScore: contentPack.qualityScores.conversionScore,
-          platformFitScore: contentPack.qualityScores.platformFitScore,
-          overallScore: contentPack.qualityScores.overallScore,
-          bestHook: contentPack.qualityScores.bestHook,
-          bestCaption: contentPack.qualityScores.bestCaption,
-          bestCta: contentPack.qualityScores.bestCta,
-          bestPlatform: contentPack.qualityScores.bestPlatform,
-          shouldPost: contentPack.qualityScores.shouldPost,
-          recommendation: contentPack.qualityScores.recommendation,
-        },
-      });
-
-      await ctx.reply(`✅ Phase 2 generated!\n\n` +
-        `📦 ${product.name}\n` +
-        `📈 Score: ${contentPack.qualityScores.overallScore}/100\n\n` +
-        `ID: \`${content.id}\``,
-        { parse_mode: 'Markdown' }
-      );
-    }
-
-    // Regenerate
-    if (data.startsWith('regen_')) {
-      const parts = data.replace('regen_', '').split('_');
-      const type = parts[0];
-      const contentId = parts.slice(1).join('_');
-
-      await ctx.answerCallbackQuery('⏳ Regenerating...');
-
-      const content = await prisma.content.findUnique({
-        where: { id: contentId },
-        include: { product: true },
-      });
-
-      if (content) {
-        const contentPack = await generatePhase2Content({
-          productName: content.product.name,
-          productPrice: Number(content.product.price),
-          productCategory: content.product.category,
-        });
-
-        // Delete old variants of type
-        if (type !== 'all') {
-          await prisma.contentVariant.deleteMany({
-            where: { contentId, variantType: type.toUpperCase() }
-          });
-
-          // Create new variants
-          const items = type === 'hooks' ? contentPack.hooks : contentPack.captions;
-          const variantType = type === 'hooks' ? 'HOOK' : 'CAPTION';
-
-          for (let i = 0; i < items.length; i++) {
-            await prisma.contentVariant.create({
-              data: {
-                contentId,
-                variantType,
-                variantIndex: i + 1,
-                contentValue: items[i],
-              },
-            });
-          }
-        }
-
-        await ctx.reply(`🔄 Regenerated ${type}!\n\nNew ${type}: ${truncate(contentPack.hooks[0] || contentPack.captions[0] || '', 80)}`);
-      }
-    }
-
-    // View all variants
-    if (data.startsWith('variants_')) {
-      const contentId = data.replace('variants_', '');
-
-      const content = await prisma.content.findUnique({
-        where: { id: contentId },
-        include: { contentVariants: { orderBy: { variantIndex: 'asc' } } },
-      });
-
-      if (content) {
-        const hooks = content.contentVariants.filter(v => v.variantType === 'HOOK');
-
-        let reply = `📝 *All Hooks (${hooks.length})*\n\n`;
-        hooks.slice(0, 5).forEach((h, i) => {
-          reply += `${i + 1}. ${truncate(h.contentValue, 80)}\n\n`;
-        });
-
-        if (hooks.length > 5) {
-          reply += `... dan ${hooks.length - 5} hooks lagi. Ketik /view ${contentId} untuk semua.`;
-        }
-
-        await ctx.answerCallbackQuery();
-        await ctx.reply(reply, { parse_mode: 'Markdown' });
-      }
-    }
-
-    // Render job callbacks
-    if (data.startsWith('rj_start_')) {
-      const jobId = data.replace('rj_start_', '');
-      await prisma.renderJob.update({
-        where: { id: jobId },
-        data: { status: 'processing', startedAt: new Date() },
-      });
-      await ctx.answerCallbackQuery('⏳ Processing...');
-      await ctx.reply('⏳ Job started processing');
-    }
-
-    if (data.startsWith('rj_complete_')) {
-      const jobId = data.replace('rj_complete_', '');
-      await prisma.renderJob.update({
-        where: { id: jobId },
-        data: { status: 'completed', completedAt: new Date() },
-      });
-      await ctx.answerCallbackQuery('✅ Completed!');
-      await ctx.reply('✅ Job marked as completed');
-    }
-
-    if (data.startsWith('rj_fail_')) {
-      const jobId = data.replace('rj_fail_', '');
-      await prisma.renderJob.update({
-        where: { id: jobId },
-        data: { status: 'failed', errorMessage: 'Failed via Telegram', completedAt: new Date() },
-      });
-      await ctx.answerCallbackQuery('❌ Failed');
-      await ctx.reply('❌ Job marked as failed');
-    }
-
-    if (data.startsWith('rj_retry_')) {
-      const jobId = data.replace('rj_retry_', '');
-      await prisma.renderJob.update({
-        where: { id: jobId },
-        data: { status: 'queued', errorMessage: null },
-      });
-      await ctx.answerCallbackQuery('🔄 Queued for retry');
-      await ctx.reply('🔄 Job queued for retry');
-    }
+    // Log approval
+    await prisma.approvalLog.create({
+      data: {
+        contentId,
+        action: 'APPROVED_PIPELINE',
+        notes: JSON.stringify({ steps: result.steps }),
+      },
+    });
 
   } catch (error: any) {
-    await ctx.answerCallbackQuery(`Error: ${error.message}`);
-    await ctx.reply(`Error: ${error.message}`);
+    console.error('[Approval] Error:', error);
+    await ctx.answerCallbackQuery('❌ Error');
+    await ctx.reply(`❌ Error approving content: ${error.message}`);
+  }
+});
+
+bot.callbackQuery(/^rejt_(.+)$/, async (ctx) => {
+  const contentId = ctx.match[1];
+
+  try {
+    await prisma.content.update({
+      where: { id: contentId },
+      data: {
+        approvalStatus: 'REJECTED',
+        rejectedAt: new Date(),
+        rejectionReason: 'Rejected via Telegram',
+      },
+    });
+
+    await prisma.approvalLog.create({
+      data: {
+        contentId,
+        action: 'REJECTED',
+      },
+    });
+
+    await ctx.answerCallbackQuery('❌ Rejected!');
+    await ctx.reply('❌ Content rejected.');
+  } catch (error) {
+    await ctx.answerCallbackQuery('❌ Error');
+    await ctx.reply('❌ Error rejecting content');
+  }
+});
+
+bot.callbackQuery(/^view_(.+)$/, async (ctx) => {
+  const contentId = ctx.match[1];
+
+  try {
+    // Get pipeline status for this content
+    const pipelineStatus = await getContentPipelineStatus(contentId);
+
+    if (!pipelineStatus) {
+      await ctx.answerCallbackQuery('❌ Content not found');
+      return;
+    }
+
+    const content = await prisma.content.findUnique({
+      where: { id: contentId },
+      include: {
+        product: true,
+        qualityScores: true,
+      },
+    });
+
+    if (!content) {
+      await ctx.answerCallbackQuery('❌ Content not found');
+      return;
+    }
+
+    await ctx.answerCallbackQuery();
+
+    // Build detailed response
+    let message = `📋 *Content Pipeline Status*\n\n`;
+
+    message += `📦 *Product:* ${content.product.name}\n`;
+    message += `📝 *Content Status:* ${content.approvalStatus}\n\n`;
+
+    // Production packages
+    if (pipelineStatus.production.length > 0) {
+      message += `🎬 *Production Packages:*\n`;
+      for (const pkg of pipelineStatus.production) {
+        message += `  • ${pkg.status}`;
+        if (pkg.renderJobs.length > 0) {
+          message += ` | Jobs: ${pkg.renderJobs.map(j => `${j.tool}(${j.status})`).join(', ')}`;
+        }
+        message += `\n`;
+      }
+    } else {
+      message += `🎬 *Production:* Not started\n`;
+    }
+
+    // Distribution
+    if (pipelineStatus.distribution.length > 0) {
+      message += `\n📨 *Distribution Queue:*\n`;
+      for (const dist of pipelineStatus.distribution.slice(0, 3)) {
+        message += `  • ${dist.status}`;
+        if (dist.postUrl) message += ` | ${dist.postUrl}`;
+        message += `\n`;
+      }
+    } else {
+      message += `\n📨 *Distribution:* Not created\n`;
+    }
+
+    message += `\n🔄 Use /approve ${contentId.substring(0, 8)} to trigger pipeline`;
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error) {
+    await ctx.answerCallbackQuery('❌ Error');
+  }
+});
+
+// Distribution processing callback
+bot.callbackQuery(/^dist_(.+)$/, async (ctx) => {
+  const distributionId = ctx.match[1];
+
+  try {
+    await ctx.answerCallbackQuery('⏳ Processing...');
+
+    const result = await executeDistributionPipeline(distributionId);
+
+    let message = result.success
+      ? `✅ *Distribution Processed*\n\n`
+      : `⚠️ *Distribution Incomplete*\n\n`;
+
+    for (const step of result.steps) {
+      message += `${step}\n`;
+    }
+
+    await ctx.reply(message, { parse_mode: 'Markdown' });
+
+  } catch (error: any) {
+    await ctx.answerCallbackQuery('❌ Error');
+    await ctx.reply(`❌ Error: ${error.message}`);
   }
 });
 
@@ -1441,122 +2123,187 @@ bot.on('callback_query', async (ctx) => {
 // TEXT HANDLER (for direct link submission)
 // ============================================
 
-bot.on('text', async (ctx) => {
+bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
 
+  // Ignore commands
   if (text.startsWith('/')) return;
 
   const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
   const isLink = text.startsWith('http') && supportedPlatforms.some(p => text.toLowerCase().includes(p));
 
   if (isLink) {
-    ctx.reply('⏳ Processing link... Generating Phase 2 content...');
-
-    try {
-      const slug = `prod_${Date.now()}`;
-
-      const product = await prisma.product.create({
-        data: {
-          name: 'Product ' + new Date().toLocaleTimeString(),
-          slug,
-          category: 'Uncategorized',
-          price: 0,
-          commission: 10,
-          commissionAmount: 0,
-          affiliatePlatform: detectPlatform(text),
-          affiliateLink: text,
-          status: 'ACTIVE',
-        },
-      });
-
-      await prisma.link.create({
-        data: {
-          slug,
-          productId: product.id,
-          originalLink: text,
-          status: 'ACTIVE',
-        },
-      });
-
-      const contentPack = await generatePhase2Content({
-        productName: product.name,
-        productPrice: 0,
-        productCategory: 'Uncategorized',
-      });
-
-      const content = await prisma.content.create({
-        data: {
-          productId: product.id,
-          contentType: 'PHASE2_FULL',
-          platform: 'ALL',
-          hook: contentPack.hooks[0],
-          caption: contentPack.captions[0],
-          hashtags: contentPack.hashtags.slice(0, 30).join(','),
-          cta: contentPack.ctas[0],
-          telegramText: contentPack.telegramText,
-          whatsappText: contentPack.whatsappText,
-          tone: 'casual',
-          language: 'id',
-          status: 'DRAFT',
-          approvalStatus: 'PENDING',
-        },
-      });
-
-      await prisma.qualityScore.create({
-        data: {
-          contentId: content.id,
-          hookScore: contentPack.qualityScores.hookScore,
-          clarityScore: contentPack.qualityScores.clarityScore,
-          conversionScore: contentPack.qualityScores.conversionScore,
-          platformFitScore: contentPack.qualityScores.platformFitScore,
-          overallScore: contentPack.qualityScores.overallScore,
-          bestHook: contentPack.qualityScores.bestHook,
-          bestCaption: contentPack.qualityScores.bestCaption,
-          bestCta: contentPack.qualityScores.bestCta,
-          bestPlatform: contentPack.qualityScores.bestPlatform,
-          shouldPost: contentPack.qualityScores.shouldPost,
-          recommendation: contentPack.qualityScores.recommendation,
-        },
-      });
-
-      await ctx.reply(`✅ Product added & Phase 2 generated!\n\n` +
-        `📦 ${product.name}\n` +
-        `📈 Score: ${contentPack.qualityScores.overallScore}/100\n` +
-        `📝 Hook: ${truncate(contentPack.hooks[0], 80)}\n\n` +
-        `ID: \`${content.id}\``,
-        { parse_mode: 'Markdown' }
-      );
-
-    } catch (error: any) {
-      await ctx.reply(`Error: ${error.message}`);
-    }
+    await ctx.reply('⏳ Processing link... Use /add [link] for proper processing with Phase 2 generation.');
   }
 });
 
 // ============================================
-// UTILITY FUNCTIONS
+// STARTUP LOGS
 // ============================================
 
-function detectPlatform(link: string): string {
-  const linkLower = link.toLowerCase();
-  if (linkLower.includes('shopee')) return 'Shopee';
-  if (linkLower.includes('tokopedia')) return 'Tokopedia';
-  if (linkLower.includes('lazada')) return 'Lazada';
-  if (linkLower.includes('tiktok')) return 'TikTok';
-  return 'Other';
+async function getBotInfo() {
+  try {
+    const me = await bot.api.getMe();
+    logInfo('Bot Information:', {
+      username: me.username,
+      firstName: me.first_name,
+      canJoinGroups: me.can_join_groups,
+      supportsInlineQueries: me.supports_inline_queries
+    });
+    return me.username;
+  } catch (error) {
+    logError('Failed to get bot info');
+    return 'unknown';
+  }
+}
+
+async function logRegisteredCommands() {
+  try {
+    const commands = [
+      { command: 'start', description: 'Start the bot' },
+      { command: 'help', description: 'Show help' },
+      { command: 'ping', description: 'Test bot' },
+      { command: 'add', description: 'Add IMAGE to queue' },
+      { command: 'addcarousel', description: 'Add CAROUSEL to queue' },
+      { command: 'addvideo', description: 'Add VIDEO (Pippit) to queue' },
+      { command: 'queue', description: 'View queue' },
+      { command: 'queueset', description: 'Set schedule' },
+      { command: 'queueprocess', description: 'Process queue' },
+      { command: 'queueclear', description: 'Clear queue' },
+      { command: 'status', description: 'System status' },
+      { command: 'stats', description: 'Analytics' },
+      { command: 'products', description: 'List products' },
+      { command: 'pending', description: 'Pending contents' },
+      { command: 'brand', description: 'Brand selection' },
+      { command: 'currentbrand', description: 'View active brand' },
+      { command: 'view', description: 'View content' },
+      { command: 'approve', description: 'Approve & generate' },
+      { command: 'reject', description: 'Reject content' },
+      { command: 'showflow', description: 'Pipeline status' },
+      { command: 'schedule', description: 'Schedule post' },
+      { command: 'pippit', description: 'Pippit manual workflow' },
+      { command: 'attachvideo', description: 'Attach video URL' },
+      { command: 'production', description: 'Production packages' },
+      { command: 'render', description: 'Render jobs' },
+      { command: 'storage', description: 'Storage status' },
+      { command: 'zerniostatus', description: 'Check Zernio post' },
+      { command: 'linktrack', description: 'Link tracking status' },
+    ];
+    logInfo('📋 Command handlers registered:', { count: commands.length });
+    commands.forEach(cmd => {
+      logInfo(`  /${cmd.command} - ${cmd.description}`);
+    });
+
+    // Register commands with Telegram
+    try {
+      const result = await bot.api.setMyCommands(commands.map(c => ({ command: c.command, description: c.description })));
+      logInfo('✅ Telegram setMyCommands result:', JSON.stringify(result));
+    } catch (err: any) {
+      logError('❌ Telegram setMyCommands failed:', err.message || err);
+    }
+  } catch (error) {
+    logError('Failed to log commands');
+  }
+}
+
+// ============================================
+// CHECK FOR WEBHOOK CONFLICTS
+// ============================================
+
+async function ensureNoWebhook() {
+  try {
+    const webhookInfo = await bot.api.getWebhookInfo();
+    logInfo('Webhook info:', webhookInfo);
+
+    if (webhookInfo.url) {
+      logInfo('⚠️ Webhook is set! Deleting webhook to enable polling...');
+      await bot.api.deleteWebhook({ drop_pending_updates: true });
+      logInfo('✅ Webhook deleted');
+    } else {
+      logInfo('✅ No webhook active - polling will work');
+    }
+
+    // Also clear any pending updates
+    logInfo('Clearing any pending updates...');
+    try {
+      await bot.api.getUpdates({ offset: -1, limit: 1, timeout: 0 });
+      logInfo('✅ Pending updates cleared');
+    } catch (e: any) {
+      // This might fail with 409 Conflict if another instance is polling
+      if (e.message?.includes('409')) {
+        logError('⚠️ Conflict: Another bot instance might be running!');
+      }
+    }
+  } catch (error) {
+    logError('Error checking webhook:', error);
+  }
 }
 
 // ============================================
 // START BOT
 // ============================================
 
-bot.launch().then(() => {
-  console.log('🤖 Telegram Bot Phase 2 started!');
-}).catch((error) => {
-  console.error('❌ Failed to start bot:', error.message);
+console.log('\n============================================');
+console.log('🤖 AI AFFILIATE ENGINE - TELEGRAM BOT');
+console.log('============================================');
+logInfo('Initializing bot...');
+logInfo('Token:', BOT_TOKEN ? 'SET ✓' : 'NOT SET ✗');
+
+// Graceful start
+async function startBot() {
+  try {
+    // Get bot info
+    const botUsername = await getBotInfo();
+
+    // CRITICAL: Ensure webhook is deleted before polling
+    await ensureNoWebhook();
+
+    // Log registered commands
+    await logRegisteredCommands();
+
+    // Send startup notification
+    if (ADMIN_CHAT_ID) {
+      await bot.api.sendMessage(
+        ADMIN_CHAT_ID,
+        `🟢 *Bot Started Successfully!*\n\n` +
+        `🤖 Username: @${botUsername}\n` +
+        `📅 Time: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}\n` +
+        `🔧 Mode: Grammy (migrated from Telegraf)\n\n` +
+        `Available commands: /help`
+      );
+    }
+
+    logInfo('Starting long polling...');
+
+    // Start bot with explicit allowed updates
+    await bot.start({
+      allowed_updates: ['message', 'callback_query'],
+    });
+
+    logInfo('✅ Polling started successfully!');
+    logInfo('📡 Listening for commands...');
+    console.log('============================================\n');
+
+  } catch (error: any) {
+    logError('Failed to start bot:', error.message);
+    process.exit(1);
+  }
+}
+
+// Handle shutdown
+process.once('SIGINT', () => {
+  console.log('🛑 Stopping bot...');
+  bot.stop();
+  process.exit(0);
 });
 
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGTERM', () => {
+  console.log('🛑 Stopping bot...');
+  bot.stop();
+  process.exit(0);
+});
+
+// Start the bot
+startBot();
 
 export default bot;

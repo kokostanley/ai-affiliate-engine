@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Header } from '@/components/Header';
-import { FileText, Star, Award, CheckCircle, XCircle, RefreshCw, Copy, Check, BarChart3, Video, Image as ImageIcon, Zap } from 'lucide-react';
+import { FileText, Star, Award, CheckCircle, XCircle, RefreshCw, Copy, Check, BarChart3, Video, Image as ImageIcon, Zap, Link as LinkIcon, AlertCircle } from 'lucide-react';
 
 interface ContentData {
   id: string;
@@ -28,6 +28,16 @@ interface ContentData {
     ctas: { index: number; content: string }[];
     scripts: { index: number; content: string }[];
   };
+  // Link placement fields (from distribution)
+  trackingLink?: string;
+  linkPlacementType?: string;
+  linkPlacementText?: string;
+  bioLinkRequired?: boolean;
+  manualActionRequired?: boolean;
+  manualActionNote?: string;
+  destinationUrl?: string;
+  pinnedCommentText?: string;
+  affiliateLink?: string;
 }
 
 interface VideoPrompt {
@@ -183,6 +193,58 @@ export default function ContentPage() {
     navigator.clipboard.writeText(text);
     setCopiedItem(id);
     setTimeout(() => setCopiedItem(null), 2000);
+  };
+
+  const getPlacementBadgeColor = (type?: string) => {
+    switch (type) {
+      case 'DIRECT':
+        return 'bg-green-400/20 text-green-400';
+      case 'BIO_LINK':
+        return 'bg-blue-400/20 text-blue-400';
+      case 'STORY_STICKER':
+        return 'bg-purple-400/20 text-purple-400';
+      case 'PINNED_COMMENT':
+        return 'bg-orange-400/20 text-orange-400';
+      case 'COMMENT':
+        return 'bg-cyan-400/20 text-cyan-400';
+      case 'BIO_PLUS_CTA':
+        return 'bg-yellow-400/20 text-yellow-400';
+      case 'NO_LINK':
+        return 'bg-red-400/20 text-red-400';
+      default:
+        return 'bg-gray-400/20 text-gray-400';
+    }
+  };
+
+  const getManualActionInstructions = (placementType?: string, platform?: string) => {
+    switch (placementType) {
+      case 'STORY_STICKER':
+        return 'Zernio tidak mendukung story sticker. Tambahkan link sticker secara manual di Instagram Story.';
+      case 'PINNED_COMMENT':
+        return 'Tambahkan pinned comment dengan link di YouTube Studio setelah posting.';
+      case 'BIO_LINK':
+        return 'Pastikan link produk sudah ada di bio Instagram sebelum posting.';
+      default:
+        return 'Check platform requirements and add link manually if needed.';
+    }
+  };
+
+  const getFinalCaptionPreview = (caption: string, placementType: string, cta: string, trackingUrl: string) => {
+    let preview = caption || '';
+
+    if (placementType === 'DIRECT') {
+      preview += `\n\n🔗 ${trackingUrl}`;
+    } else if (['BIO_LINK', 'BIO_PLUS_CTA', 'STORY_STICKER'].includes(placementType)) {
+      if (cta) {
+        preview += `\n\n${cta}`;
+      }
+    } else if (placementType === 'COMMENT') {
+      if (trackingUrl) {
+        preview += `\n\n🔗 ${trackingUrl}`;
+      }
+    }
+
+    return preview;
   };
 
   const formatPrice = (price: number) => {
@@ -448,6 +510,165 @@ export default function ContentPage() {
                       </div>
                       <p className="text-white text-sm whitespace-pre-wrap">{selectedContent?.whatsappText || 'No content'}</p>
                     </div>
+                  </div>
+                </div>
+
+                {/* Link Strategy Section */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                    <LinkIcon className="h-5 w-5 text-green-400" />
+                    Link Strategy
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Platform</p>
+                      <p className="text-white font-medium">
+                        {selectedContent?.platform || 'Not distributed yet'}
+                      </p>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Placement Type</p>
+                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        getPlacementBadgeColor(selectedContent?.linkPlacementType)
+                      }`}>
+                        {selectedContent?.linkPlacementType || 'PENDING'}
+                      </span>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Tracking URL</p>
+                      {selectedContent?.trackingLink ? (
+                        <div className="flex items-center gap-2">
+                          <p className="text-white text-xs truncate flex-1">{selectedContent.trackingLink}</p>
+                          <button
+                            onClick={() => copyToClipboard(selectedContent?.trackingLink || '', 'tracking')}
+                            className="text-blue-400 hover:text-blue-300"
+                          >
+                            {copiedItem === 'tracking' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500">No tracking URL</p>
+                      )}
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Bio Link Required</p>
+                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        selectedContent?.bioLinkRequired ? 'bg-yellow-400/20 text-yellow-400' : 'bg-gray-400/20 text-gray-400'
+                      }`}>
+                        {selectedContent?.bioLinkRequired ? 'Yes - Add to bio' : 'No'}
+                      </span>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Manual Action</p>
+                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        selectedContent?.manualActionRequired ? 'bg-orange-400/20 text-orange-400' : 'bg-gray-400/20 text-gray-400'
+                      }`}>
+                        {selectedContent?.manualActionRequired ? 'Required' : 'None'}
+                      </span>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Affiliate Link</p>
+                      {selectedContent?.affiliateLink ? (
+                        <div className="flex items-center gap-2">
+                          <p className="text-white text-xs truncate flex-1">{selectedContent.affiliateLink}</p>
+                          <button
+                            onClick={() => copyToClipboard(selectedContent?.affiliateLink || '', 'affiliate')}
+                            className="text-blue-400 hover:text-blue-300"
+                          >
+                            {copiedItem === 'affiliate' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500">No affiliate link</p>
+                      )}
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4 md:col-span-2">
+                      <p className="text-sm text-gray-400 mb-2">CTA Text</p>
+                      <p className="text-white">
+                        {selectedContent?.linkPlacementText || 'Link ada di bio 🔗'}
+                      </p>
+                    </div>
+                    <div className="bg-[#1a2332] rounded-lg p-4">
+                      <p className="text-sm text-gray-400 mb-2">Final Destination</p>
+                      {selectedContent?.destinationUrl ? (
+                        <div className="flex items-center gap-2">
+                          <p className="text-white text-xs truncate flex-1">{selectedContent.destinationUrl}</p>
+                          <button
+                            onClick={() => copyToClipboard(selectedContent?.destinationUrl || '', 'destination')}
+                            className="text-blue-400 hover:text-blue-300"
+                          >
+                            {copiedItem === 'destination' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500">Not set</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Manual Action Warning */}
+                  {selectedContent?.manualActionRequired && (
+                    <div className="bg-yellow-400/10 border border-yellow-400/30 rounded-lg p-4 mt-4">
+                      <p className="text-sm text-yellow-400 mb-2 flex items-center gap-2">
+                        <AlertCircle className="h-4 w-4" />
+                        Manual Action Required
+                      </p>
+                      <p className="text-white text-sm">
+                        {selectedContent?.manualActionNote || 'Check platform requirements'}
+                      </p>
+                      <div className="mt-2 p-2 bg-[#0f172a] rounded">
+                        <p className="text-xs text-gray-400">Action Note:</p>
+                        <p className="text-sm text-white">
+                          {getManualActionInstructions(selectedContent?.linkPlacementType, selectedContent?.platform)}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pinned Comment Preview */}
+                  {selectedContent?.pinnedCommentText && (
+                    <div className="bg-purple-400/10 border border-purple-400/30 rounded-lg p-4 mt-4">
+                      <p className="text-sm text-purple-400 mb-2 flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Pinned Comment Text
+                      </p>
+                      <p className="text-white text-sm whitespace-pre-wrap">{selectedContent.pinnedCommentText}</p>
+                      <button
+                        onClick={() => copyToClipboard(selectedContent?.pinnedCommentText || '', 'pinned')}
+                        className="mt-2 px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs font-medium"
+                      >
+                        Copy Pinned Comment
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Final Caption Preview */}
+                  <div className="bg-blue-400/10 border border-blue-400/30 rounded-lg p-4 mt-4">
+                    <p className="text-sm text-blue-400 mb-2 flex items-center gap-2">
+                      Final Caption Preview
+                    </p>
+                    <p className="text-white text-sm whitespace-pre-wrap">
+                      {getFinalCaptionPreview(
+                        selectedContent?.caption || '',
+                        selectedContent?.linkPlacementType || 'BIO_LINK',
+                        selectedContent?.linkPlacementText || 'Link ada di bio 🔗',
+                        selectedContent?.trackingLink || selectedContent?.affiliateLink || ''
+                      )}
+                    </p>
+                    <button
+                      onClick={() => copyToClipboard(
+                        getFinalCaptionPreview(
+                          selectedContent?.caption || '',
+                          selectedContent?.linkPlacementType || 'BIO_LINK',
+                          selectedContent?.linkPlacementText || 'Link ada di bio 🔗',
+                          selectedContent?.trackingLink || selectedContent?.affiliateLink || ''
+                        ),
+                        'final-caption'
+                      )}
+                      className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium"
+                    >
+                      Copy Final Caption
+                    </button>
                   </div>
                 </div>
 

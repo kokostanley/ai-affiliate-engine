@@ -19,6 +19,16 @@ import analyticsRouter from './routes/analytics';
 import schedulerRouter from './routes/scheduler';
 import webhooksRouter from './routes/webhooks';
 import workflowRouter from './routes/workflow';
+import productionRouter from './routes/production';
+import renderingRouter from './routes/rendering';
+import brandsRouter from './routes/brands';
+import distributionRouter from './routes/distribution';
+import revenueRouter from './routes/revenue';
+import assetsRouter from './routes/assets';
+import affiliateRouter from './routes/affiliate';
+import linksTrackingRouter from './routes/links-tracking';
+import waitingUploadRouter from './routes/waiting-upload';
+import zernioRouter from './routes/zernio';
 import { errorHandler, notFoundHandler } from '../middleware/error';
 import { startRateLimitCleaner } from '../services/rateLimit';
 
@@ -130,11 +140,21 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/products', productsRouter);
 app.use('/api/links', linksRouter);
+app.use('/api/links/tracking', linksTrackingRouter);
 app.use('/api/content', contentRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/scheduler', schedulerRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/workflow', workflowRouter);
+app.use('/api/production', productionRouter);
+app.use('/api/rendering', renderingRouter);
+app.use('/api/brands', brandsRouter);
+app.use('/api/distribution', distributionRouter);
+app.use('/api/revenue', revenueRouter);
+app.use('/api/assets', assetsRouter);
+app.use('/api/affiliate', affiliateRouter);
+app.use('/api/waiting-upload', waitingUploadRouter);
+app.use('/api/zernio', zernioRouter);
 
 // ============================================
 // SHORT LINK REDIRECT (for /go/:slug)

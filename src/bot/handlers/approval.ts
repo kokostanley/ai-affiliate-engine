@@ -1,32 +1,31 @@
 // ============================================
-// Approval Handlers (Simplified)
+// Approval Handlers (Grammy Version)
 // ============================================
 
-import { Markup } from 'telegraf';
 import { getContentById, updateContentApproval, updateUserStats, isAdmin, getPendingContent } from '../database';
 
 export async function handleApprove(ctx: any, contentId: string) {
   const telegramId = String(ctx.from?.id || '');
 
   if (!(await isAdmin(telegramId))) {
-    await ctx.answerCbQuery('⛔ Hanya admin yang bisa approve', { show_alert: true });
+    await ctx.answerCallbackQuery('⛔ Hanya admin yang bisa approve', { show_alert: true });
     return;
   }
 
   const content = await getContentById(contentId);
   if (!content) {
-    await ctx.answerCbQuery('❌ Konten tidak ditemukan', { show_alert: true });
+    await ctx.answerCallbackQuery('❌ Konten tidak ditemukan', { show_alert: true });
     return;
   }
 
   await updateContentApproval(contentId, 'approve', telegramId);
   await updateUserStats(telegramId, true);
 
-  await ctx.answerCbQuery('✅ Konten disetujui!', { show_alert: true });
+  await ctx.answerCallbackQuery('✅ Konten disetujui!', { show_alert: true });
 
   await ctx.editMessageText(`✅ <b>KONTEN DISETUJI</b>\n\n📦 ${content.product.name}\n📝 ${content.contentType}`, {
     parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[Markup.button.callback('« Kembali', 'menu:pending')]] },
+    reply_markup: { inline_keyboard: [[{ text: '« Kembali', callback_data: 'menu:pending' }]] },
   });
 }
 
@@ -34,24 +33,24 @@ export async function handleReject(ctx: any, contentId: string) {
   const telegramId = String(ctx.from?.id || '');
 
   if (!(await isAdmin(telegramId))) {
-    await ctx.answerCbQuery('⛔ Hanya admin', { show_alert: true });
+    await ctx.answerCallbackQuery('⛔ Hanya admin', { show_alert: true });
     return;
   }
 
   const content = await getContentById(contentId);
   if (!content) {
-    await ctx.answerCbQuery('❌ Konten tidak ditemukan', { show_alert: true });
+    await ctx.answerCallbackQuery('❌ Konten tidak ditemukan', { show_alert: true });
     return;
   }
 
-  await ctx.answerCbQuery();
+  await ctx.answerCallbackQuery();
 
   await ctx.editMessageText(`❌ <b>TOLAK KONTEN</b>\n\n📝 ${content.product.name}\n\nPilih alasan:`, {
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
-        [Markup.button.callback('🔴 Kualitas Buruk', `reject:reason:${contentId}:quality`), Markup.button.callback('🟡 Tidak Relevan', `reject:reason:${contentId}:relevance`)],
-        [Markup.button.callback('« Batal', `pending:view:${contentId}`)],
+        [{ text: '🔴 Kualitas Buruk', callback_data: `reject:reason:${contentId}:quality` }, { text: '🟡 Tidak Relevan', callback_data: `reject:reason:${contentId}:relevance` }],
+        [{ text: '« Batal', callback_data: `pending:view:${contentId}` }],
       ],
     },
   });
@@ -68,11 +67,11 @@ export async function handleRejectWithReason(ctx: any, contentId: string, reason
   await updateContentApproval(contentId, 'reject', telegramId, reasonText);
   await updateUserStats(telegramId, false);
 
-  await ctx.answerCbQuery('❌ Konten ditolak', { show_alert: true });
+  await ctx.answerCallbackQuery('❌ Konten ditolak', { show_alert: true });
 
   await ctx.editMessageText(`❌ <b>KONTEN DITOLAK</b>\n\n📋 Alasan: ${reasonText}\n\nKonten tidak akan di-schedule.`, {
     parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[Markup.button.callback('« Kembali', 'menu:pending')]] },
+    reply_markup: { inline_keyboard: [[{ text: '« Kembali', callback_data: 'menu:pending' }]] },
   });
 }
 
@@ -80,23 +79,23 @@ export async function handleRegenerate(ctx: any, contentId: string) {
   const telegramId = String(ctx.from?.id || '');
 
   if (!(await isAdmin(telegramId))) {
-    await ctx.answerCbQuery('⛔ Hanya admin', { show_alert: true });
+    await ctx.answerCallbackQuery('⛔ Hanya admin', { show_alert: true });
     return;
   }
 
   const content = await getContentById(contentId);
   if (!content) {
-    await ctx.answerCbQuery('❌ Konten tidak ditemukan', { show_alert: true });
+    await ctx.answerCallbackQuery('❌ Konten tidak ditemukan', { show_alert: true });
     return;
   }
 
   await updateContentApproval(contentId, 'regenerate', telegramId);
 
-  await ctx.answerCbQuery('🔄 Permintaan regenerate dikirim', { show_alert: true });
+  await ctx.answerCallbackQuery('🔄 Permintaan regenerate dikirim', { show_alert: true });
 
   await ctx.editMessageText(`🔄 <b>REGENERATE</b>\n\n📝 ${content.contentType}\n🎯 ${content.platform}\n\n⏳ AI sedang membuat versi baru...`, {
     parse_mode: 'HTML',
-    reply_markup: { inline_keyboard: [[Markup.button.callback('« Kembali', 'menu:pending')]] },
+    reply_markup: { inline_keyboard: [[{ text: '« Kembali', callback_data: 'menu:pending' }]] },
   });
 }
 
@@ -104,7 +103,7 @@ export async function handleViewPendingContent(ctx: any, contentId: string) {
   const content = await getContentById(contentId);
 
   if (!content) {
-    await ctx.answerCbQuery('❌ Konten tidak ditemukan', { show_alert: true });
+    await ctx.answerCallbackQuery('❌ Konten tidak ditemukan', { show_alert: true });
     return;
   }
 
@@ -117,14 +116,14 @@ export async function handleViewPendingContent(ctx: any, contentId: string) {
   if (content.hook) message += `🎣 <b>Hook:</b>\n${content.hook.slice(0, 150)}...\n\n`;
   if (content.caption) message += `📄 <b>Caption:</b>\n${content.caption.slice(0, 150)}...\n\n`;
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('✅ Approve', `approve:${contentId}`), Markup.button.callback('❌ Reject', `reject:${contentId}`)],
-    [Markup.button.callback('🔄 Regenerate', `regenerate:${contentId}`)],
-    [Markup.button.callback('« Kembali', 'menu:pending')],
-  ]);
+  const keyboard = [
+    [{ text: '✅ Approve', callback_data: `approve:${contentId}` }, { text: '❌ Reject', callback_data: `reject:${contentId}` }],
+    [{ text: '🔄 Regenerate', callback_data: `regenerate:${contentId}` }],
+    [{ text: '« Kembali', callback_data: 'menu:pending' }],
+  ];
 
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: keyboard });
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
 }
 
 export async function handleRefreshPending(ctx: any) {
@@ -133,7 +132,7 @@ export async function handleRefreshPending(ctx: any) {
   if (pending.length === 0) {
     await ctx.editMessageText('✅ <b>Tidak ada konten pending</b>', {
       parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [[Markup.button.callback('« Kembali', 'menu:main')]] },
+      reply_markup: { inline_keyboard: [[{ text: '« Kembali', callback_data: 'menu:main' }]] },
     });
     return;
   }
@@ -146,11 +145,11 @@ export async function handleRefreshPending(ctx: any) {
     message += `   📝 ${content.contentType}\n\n`;
   }
 
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('📋 Lihat Pertama', `pending:view:${pending[0].id}`)],
-    [Markup.button.callback('« Kembali', 'menu:main')],
-  ]);
+  const keyboard = [
+    [{ text: '📋 Lihat Pertama', callback_data: `pending:view:${pending[0].id}` }],
+    [{ text: '« Kembali', callback_data: 'menu:main' }],
+  ];
 
-  await ctx.answerCbQuery();
-  await ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: keyboard });
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
 }
