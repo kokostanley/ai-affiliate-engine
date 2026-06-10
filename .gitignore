@@ -4,7 +4,30 @@ node_modules/
 # Environment
 .env
 .env.local
-.env.*.local
+.env.development.local
+.env.production.local
+.env.test.local
+# NOTE: .env.example and .env.safe.template are INTENTIONALLY tracked
+# They contain template values only, no real secrets
+
+# Secrets & Credentials (local files only)
+*secret*.local
+*-secret.local
+*credential*.local
+*key*.local
+*.pem
+*.p12
+*.key
+*.crt
+*credentials*
+*oauth*
+*token*
+service-account*
+private-*.json
+
+# Google OAuth
+google-credentials.json
+oauth-token.json
 
 # Build output
 .next/
@@ -43,3 +66,4 @@ tsconfig.tsbuildinfo
 # Temporary
 *.tmp
 temp/
+aff.txt
