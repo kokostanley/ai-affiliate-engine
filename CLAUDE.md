@@ -45,6 +45,11 @@ AI-powered affiliate marketing engine that renders product images, manages asset
 npm run dev          # Start dev server
 npm run build        # Production build
 
+# Workers (Background Processing)
+npm run dev:workers              # Start ALL workers (render + distribution)
+npm run dev:render-worker        # Start render worker only
+npm run dev:distribution-worker  # Start distribution worker only
+
 # Database
 npx prisma migrate   # Run migrations
 npx prisma studio    # Open Prisma Studio
@@ -76,6 +81,76 @@ npm test             # Run tests
 - Unit tests: Vitest
 - E2E tests: Playwright
 - Run before PR: `npm test && npm run build`
+
+---
+
+## Automatic Workflow System
+
+### Overview
+
+After adding an affiliate link, the system automatically processes through the pipeline:
+
+```
+Affiliate Link → Generate Content → Approve → Render → Upload to Cloud → Post to Social Media
+```
+
+### Pipeline Flow
+
+```
+1. USER ADDS LINK (/add command)
+   ↓
+2. Workflow Service
+   - Scrape product info
+   - Generate AI content (hooks, captions, hashtags, CTA)
+   - Create Product + Content records (status: PENDING)
+   ↓
+3. USER APPROVES CONTENT (/approve command)
+   ↓
+4. Approval Pipeline
+   - Create ProductionPackage
+   - Create RenderJob (queued)
+   - Create DistributionQueue item (status: QUEUED)
+   ↓
+5. RENDER WORKER (background)
+   - Polls for queued render jobs
+   - Generates video/image (Pippit/Higgsfield)
+   - Uploads to Google Drive/Dropbox
+   - Creates AssetFile
+   ↓
+6. DISTRIBUTION WORKER (background)
+   - Triggers automatically after render completion
+   - Polls for QUEUED distribution items
+   - Posts to Zernio API
+   - Updates tracking records
+   ↓
+7. CONTENT POSTED
+   - Social media post created
+   - Tracking link activated
+   - Analytics recorded
+```
+
+### Workers
+
+| Worker | Purpose | Poll Interval |
+|--------|---------|---------------|
+| Render Worker | Process video/image generation | 10 seconds |
+| Distribution Worker | Auto-post to social media | 15 seconds |
+
+### Start Workers
+
+```bash
+# Start all workers (recommended)
+npm run dev:workers
+
+# Or start individually
+npm run dev:render-worker        # Render only
+npm run dev:distribution-worker   # Distribution only
+```
+
+### Status Tracking
+
+Track link status via `/linktrack` command:
+- `PRODUCT_CREATED` → `CONTENT_GENERATED` → `APPROVED` → `DISTRIBUTED` → `POSTED` → `ACTIVE`
 
 ---
 

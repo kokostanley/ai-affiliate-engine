@@ -7,6 +7,7 @@ import { PrismaClient } from '@prisma/client';
 import * as pippit from '../services/pippit';
 import * as higgsfield from '../services/higgsfield';
 import * as cloudStorage from '../services/cloud-storage';
+import { distributionWorker } from './distribution-worker';
 import 'dotenv/config';
 
 const prisma = new PrismaClient();
@@ -271,6 +272,8 @@ class RenderWorker {
       }
     });
 
+    let assetCreated = false;
+
     // Upload to cloud storage and create AssetFile
     if (result.outputUrl) {
       try {
@@ -288,6 +291,14 @@ class RenderWorker {
 
         if (uploadResult.success) {
           console.log(`[RenderWorker] Asset created: ${uploadResult.assetFileId}`);
+          assetCreated = true;
+
+          // Trigger distribution pipeline for this package
+          // This will find queued distribution items and auto-post them
+          console.log(`[RenderWorker] Triggering distribution for package ${job.productionPackageId}`);
+          distributionWorker.triggerForPackage(job.productionPackageId).catch(err => {
+            console.error(`[RenderWorker] Failed to trigger distribution:`, err.message);
+          });
         } else {
           console.log(`[RenderWorker] Cloud upload failed: ${uploadResult.error}`);
         }
@@ -296,7 +307,7 @@ class RenderWorker {
       }
     }
 
-    console.log(`[RenderWorker] ✅ Job ${job.id} done. Output: ${result.outputUrl}`);
+    console.log(`[RenderWorker] ✅ Job ${job.id} done. Output: ${result.outputUrl}, Asset: ${assetCreated}`);
   }
 
   async handleJobFailure(job: any, errorMessage: string) {
