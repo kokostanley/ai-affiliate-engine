@@ -63,6 +63,7 @@
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "slugify": "^1.6.6",
+    "superpowers": "github:obra/superpowers",
     "telegraf": "^4.16.0",
     "zod": "^3.23.0"
   },
