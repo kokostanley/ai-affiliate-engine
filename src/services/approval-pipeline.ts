@@ -34,6 +34,10 @@ export interface PipelineResult {
   contentType: ContentType;
   productionPackageId?: string;
   renderJobIds: string[];
+  distributionId?: string;
+  trackingId?: string;
+  trackingLink?: string;
+  zernioPostId?: string;
   steps: string[];
   warning?: string;
   error?: string;
@@ -327,7 +331,23 @@ async function executeImagePipeline(
   });
 
   if (distResult.success && distResult.item) {
+    result.distributionId = distResult.item.id;
     steps.push(`✅ Distribution: ${distResult.item.id.substring(0, 8)}...`);
+    result.steps.push(`📨 Distribution ID: ${distResult.item.id}`);
+
+    // Get tracking record
+    const tracking = await linkTracking.getTrackingByDistributionId(distResult.item.id);
+    if (tracking) {
+      result.trackingId = tracking.id;
+      result.trackingLink = tracking.trackingLink || tracking.originalLink;
+      steps.push(`📊 Tracking: ${result.trackingLink?.substring(0, 50)}...`);
+    }
+
+    // Get Zernio post ID if available
+    if (distResult.item.postId) {
+      result.zernioPostId = distResult.item.postId;
+      steps.push(`📨 Zernio: ${distResult.item.postId.substring(0, 8)}...`);
+    }
   } else {
     steps.push(`⚠️ Distribution: ${distResult.error || 'skipped'}`);
   }

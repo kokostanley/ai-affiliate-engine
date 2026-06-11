@@ -834,11 +834,20 @@ Creating product and generating...`);
       brandId: brand.id,
     });
 
-    // Build response
-    let response = `IMAGE AUTO-POST COMPLETE
+    // Get tracking info if distribution was created
+    let trackingInfo = null;
+    if (result.distributionId) {
+      const { getTrackingByDistributionId } = await import('../services/link-tracking');
+      trackingInfo = await getTrackingByDistributionId(result.distributionId);
+    }
 
-Product: ${product.name}
-Type: IMAGE
+    // Build detailed response
+    let response = `✅ *IMAGE AUTO-POST COMPLETE*
+
+📦 *Product:* ${product.name}
+📋 *Content ID:* \`${content.id.substring(0, 12)}...\`
+🖼️ *Type:* IMAGE
+🏢 *Brand:* ${brand.name}
 
 `;
     for (const step of result.steps) {
@@ -846,14 +855,29 @@ Type: IMAGE
     }
 
     if (result.productionPackageId) {
-      response += `\nPackage ID: ${result.productionPackageId.substring(0, 8)}...\n`;
+      response += `\n📦 *Package:* \`${result.productionPackageId.substring(0, 12)}...\``;
     }
 
     if (result.renderJobIds?.length > 0) {
-      response += `Render jobs: ${result.renderJobIds.length}\n`;
+      response += `\n🎨 *Render Jobs:* ${result.renderJobIds.length}`;
     }
 
-    response += `\nNext: /schedule [id] [time] to schedule`;
+    if (result.distributionId) {
+      response += `\n📨 *Distribution ID:* \`${result.distributionId.substring(0, 12)}...\``;
+    }
+
+    if (trackingInfo) {
+      const trackUrl = trackingInfo.trackingLink ? trackingInfo.trackingLink.substring(0, 60) + '...' : 'N/A';
+      response += `\n🔗 *Tracking URL:* ${trackUrl}`;
+      response += `\n📊 *Short Code:* ${trackingInfo.shortCode || 'N/A'}`;
+      response += `\n🔄 *Stage:* ${trackingInfo.currentPipelineStage}`;
+    }
+
+    if (result.zernioPostId) {
+      response += `\n📡 *Zernio Post:* \`${result.zernioPostId.substring(0, 12)}...\``;
+    }
+
+    response += `\n\n💡 *Next:* /schedule [distribution_id] [datetime] to schedule Zernio draft`;
 
     await safeReply(ctx, response);
 
@@ -1029,9 +1053,9 @@ bot.command('showflow', async (ctx) => {
     // Pipeline diagram
     message += `\n📐 *CONTENT TYPES*\n`;
     message += `\`\`\`\n`;
-    message += `🖼️ /intake [link]      → IMAGE post\n`;
-    message += `🎠 /intakecarousel     → CAROUSEL (5-7 slides)\n`;
-    message += `🎬 /intakevideo [link] → VIDEO (Pippit manual)\n`;
+    message += `🖼️ /add [link]      → IMAGE auto-post\n`;
+    message += `🎠 /addcarousel [link] → CAROUSEL (5-7 slides)\n`;
+    message += `🎬 /addvideo [link] → VIDEO (Pippit manual)\n`;
     message += `\`\`\`\n\n`;
 
     message += `📊 *POSTING MIX (Recommended)*\n`;

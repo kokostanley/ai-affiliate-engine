@@ -170,7 +170,8 @@
       "Bash(grep -iE \"\\\\.env$|secret|credential|\\\\.key$|\\\\.pem$|token\\\\.json|service-account\")",
       "Bash(grep \"^.env$\")",
       "Bash(xargs grep -l \"sk_[a-zA-Z0-9]\\\\{30,\\\\}\")",
-      "Bash(git commit -m 'security: lockdown - remove secrets from tracking *)"
+      "Bash(git commit -m 'security: lockdown - remove secrets from tracking *)",
+      "Bash(git ls-files *)"
     ]
   }
 }
