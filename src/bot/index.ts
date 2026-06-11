@@ -1959,7 +1959,7 @@ bot.command('storage', async (ctx) => {
 // CALLBACK HANDLERS
 // ============================================
 
-import { executeApprovalPipeline, executeDistributionPipeline, getContentPipelineStatus } from '../services/approval-pipeline';
+import { executeApprovalPipeline, getContentPipelineStatus } from '../services/approval-pipeline';
 
 bot.callbackQuery(/^appr_(.+)$/, async (ctx) => {
   const contentId = ctx.match[1];

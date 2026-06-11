@@ -77,7 +77,7 @@ class DistributionWorker {
       // Find items ready for posting
       const readyItems = await prisma.distributionQueue.findMany({
         where: {
-          status: { in: ['QUEUED', 'READY'] },
+          status: { in: ['QUEUED', 'READY', 'ZERNIO_DRAFT_CREATED'] },
           approvalStatus: 'APPROVED',
           // Must have video or image
           OR: [

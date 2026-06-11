@@ -583,3 +583,137 @@ export async function testZernioConnection(apiKey: string): Promise<{
     return { success: false, message: `Connection failed: ${error.message}` };
   }
 }
+
+/**
+ * Create Zernio draft for a distribution item
+ * This creates a draft post in Zernio that can be scheduled or posted later
+ */
+export async function createZernioDraft(
+  distributionId: string
+): Promise<{ success: boolean; postId?: string; error?: string }> {
+  try {
+    // Get distribution item
+    const distribution = await prisma.distributionQueue.findUnique({
+      where: { id: distributionId },
+      include: { brand: true },
+    });
+
+    if (!distribution) {
+      return { success: false, error: 'Distribution not found' };
+    }
+
+    // Get available account and Zernio key
+    const available = await getNextAvailableAccount(distribution.brandId, distribution.platform);
+    if (!available) {
+      return { success: false, error: 'No available Zernio account for this platform' };
+    }
+
+    // Parse hashtags
+    const hashtags = distribution.hashtags ? distribution.hashtags.split(',').filter(Boolean) : [];
+
+    // Build caption with tracking link
+    const caption = distribution.caption || '';
+    const trackingUrl = distribution.trackingLink || '';
+    const fullCaption = trackingUrl ? `${caption}\n\n${trackingUrl}` : caption;
+
+    // Post to Zernio (creates draft - no platforms array)
+    const result = await postToZernio(available.zernioConfig.apiKey, {
+      accountId: available.account.accountId,
+      content: {
+        videoUrl: distribution.videoUrl || undefined,
+        thumbnailUrl: distribution.thumbnailUrl || undefined,
+        caption: fullCaption,
+        hashtags,
+        script: distribution.script || undefined,
+      },
+      // No platforms = creates draft
+    });
+
+    if (result.success) {
+      // Update distribution with post info
+      await prisma.distributionQueue.update({
+        where: { id: distributionId },
+        data: {
+          postId: result.postId,
+          postUrl: result.postUrl || undefined,
+          zernioConfigId: available.zernioConfig.id,
+          socialAccountId: available.account.id,
+          status: result.status === 'draft' ? 'ZERNIO_DRAFT_CREATED' : 'ZERNIO_SCHEDULED',
+        },
+      });
+
+      console.log(`[Zernio] Draft created for distribution ${distributionId}: ${result.postId}`);
+      return { success: true, postId: result.postId };
+    }
+
+    return { success: false, error: result.error };
+  } catch (error: any) {
+    console.error('[Zernio] Create draft failed:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Create Zernio draft with media from Google Drive
+ * For image/carousel content that has been uploaded to Google Drive
+ */
+export async function createZernioDraftWithMedia(
+  distributionId: string,
+  mediaUrl: string,
+  mediaType: 'image' | 'video' = 'image'
+): Promise<{ success: boolean; postId?: string; error?: string }> {
+  try {
+    const distribution = await prisma.distributionQueue.findUnique({
+      where: { id: distributionId },
+      include: { brand: true },
+    });
+
+    if (!distribution) {
+      return { success: false, error: 'Distribution not found' };
+    }
+
+    const available = await getNextAvailableAccount(distribution.brandId, distribution.platform);
+    if (!available) {
+      return { success: false, error: 'No available Zernio account' };
+    }
+
+    const hashtags = distribution.hashtags ? distribution.hashtags.split(',').filter(Boolean) : [];
+    const caption = distribution.caption || '';
+    const trackingUrl = distribution.trackingLink || '';
+    const fullCaption = trackingUrl ? `${caption}\n\n${trackingUrl}` : caption;
+
+    const result = await postToZernio(available.zernioConfig.apiKey, {
+      accountId: available.account.accountId,
+      platforms: [{
+        platform: distribution.platform.toLowerCase() as any,
+        accountId: available.account.accountId,
+      }],
+      content: {
+        thumbnailUrl: mediaType === 'image' ? mediaUrl : undefined,
+        videoUrl: mediaType === 'video' ? mediaUrl : undefined,
+        caption: fullCaption,
+        hashtags,
+        script: distribution.script || undefined,
+      },
+    });
+
+    if (result.success) {
+      await prisma.distributionQueue.update({
+        where: { id: distributionId },
+        data: {
+          postId: result.postId,
+          postUrl: result.postUrl || undefined,
+          zernioConfigId: available.zernioConfig.id,
+          socialAccountId: available.account.id,
+          status: 'ZERNIO_DRAFT_CREATED',
+        },
+      });
+
+      return { success: true, postId: result.postId };
+    }
+
+    return { success: false, error: result.error };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}

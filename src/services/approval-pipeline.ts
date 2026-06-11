@@ -85,10 +85,11 @@ export async function executeContentTypePipeline(
           data: { approvalStatus: 'APPROVED', approvedAt: new Date() },
         });
         steps.push('✅ Content auto-approved');
-        
+
         // Update affiliate link tracking pipeline stage
         try {
-          const tracking = await linkTracking.getTrackingByDistributionId(item?.id);
+          // Try to find tracking by contentId
+          const tracking = await linkTracking.getTrackingByContentId(content.id);
           if (tracking) {
             await linkTracking.updatePipelineStage(tracking.id, 'APPROVED', 'Content approved via pipeline');
             steps.push('📊 Tracking stage: APPROVED');
@@ -225,7 +226,7 @@ async function executeVideoPipeline(
         const job = await createRenderJob({
           productionPackageId: packageResult.packageId,
           jobType: 'VIDEO',
-          tool: 'HIGGSFIELD',
+          tool: 'SEEDANCE', // Use SEEDANCE as the Higgsfield video tool
           prompt: higgsfieldPrompt,
           duration: 30,
           format: '9:16',
@@ -333,7 +334,20 @@ async function executeImagePipeline(
   if (distResult.success && distResult.item) {
     result.distributionId = distResult.item.id;
     steps.push(`✅ Distribution: ${distResult.item.id.substring(0, 8)}...`);
-    result.steps.push(`📨 Distribution ID: ${distResult.item.id}`);
+
+    // AUTO-APPROVE: Move distribution from DRAFT to QUEUED
+    // This triggers the DistributionWorker to auto-post to Zernio
+    await prisma.distributionQueue.update({
+      where: { id: distResult.item.id },
+      data: {
+        status: 'QUEUED',
+        approvalStatus: 'APPROVED',
+        approvedAt: new Date(),
+        approvedBy: 'auto-pipeline',
+      },
+    });
+    steps.push(`✅ Distribution auto-approved to QUEUED`);
+    steps.push(`🚀 Worker will post to Zernio automatically`);
 
     // Get tracking record
     const tracking = await linkTracking.getTrackingByDistributionId(distResult.item.id);
@@ -343,10 +357,18 @@ async function executeImagePipeline(
       steps.push(`📊 Tracking: ${result.trackingLink?.substring(0, 50)}...`);
     }
 
-    // Get Zernio post ID if available
-    if (distResult.item.postId) {
-      result.zernioPostId = distResult.item.postId;
-      steps.push(`📨 Zernio: ${distResult.item.postId.substring(0, 8)}...`);
+    // AUTO-CREATE ZERNIO DRAFT
+    // Create Zernio draft immediately for faster posting
+    try {
+      const { createZernioDraft } = await import('./zernio');
+      const zernioResult = await createZernioDraft(distResult.item.id);
+      if (zernioResult.success) {
+        result.zernioPostId = zernioResult.postId;
+        steps.push(`✅ Zernio draft: ${zernioResult.postId.substring(0, 8)}...`);
+      }
+    } catch (zernioError) {
+      console.error('[Pipeline] Zernio draft failed:', zernioError);
+      steps.push(`⚠️ Zernio draft: ${(zernioError as Error).message}`);
     }
   } else {
     steps.push(`⚠️ Distribution: ${distResult.error || 'skipped'}`);

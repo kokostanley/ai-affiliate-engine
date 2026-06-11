@@ -897,3 +897,42 @@ export function generateShortCode(): string {
   const random = Math.random().toString(36).substring(2, 8);
   return `${timestamp}-${random}`;
 }
+
+/**
+ * Get tracking by content ID
+ */
+export async function getTrackingByContentId(contentId: string): Promise<TrackedLink | null> {
+  const tracking = await prisma.affiliateLinkTracking.findFirst({
+    where: { contentId },
+    include: {
+      product: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          price: true,
+          commissionAmount: true,
+        },
+      },
+      brand: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+    },
+  });
+
+  if (!tracking) return null;
+
+  let pipelineHistory: PipelineStageEntry[] = [];
+  try {
+    pipelineHistory = JSON.parse(tracking.pipelineHistory);
+  } catch {}
+
+  return {
+    ...tracking,
+    pipelineHistory,
+  };
+}
