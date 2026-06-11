@@ -33,7 +33,10 @@
       "Bash(npm install obra/superpowers)",
       "Bash(git remote add *)",
       "Bash(node -e *)",
-      "Bash(git stash)"
+      "Bash(git stash)",
+      "Bash(curl -s https://raw.githubusercontent.com/thedotmack/skill/main/skill.md -o .claude/skills/thedotmack.md)",
+      "Bash(curl -s https://raw.githubusercontent.com/garrytan/gstack/main/skill.md -o .claude/skills/gstack.md)",
+      "WebFetch(domain:github.com)"
     ]
   },
   "skills": {
@@ -41,6 +44,11 @@
     "include": [
       "security-guidance",
       "code-review",
+      "gstack/design-review",
+      "gstack/qa",
+      "gstack/ship",
+      "gstack/review",
+      "gstack/test",
       "superpowers/writing-plans",
       "superpowers/test-driven-development",
       "superpowers/subagent-driven-development"
