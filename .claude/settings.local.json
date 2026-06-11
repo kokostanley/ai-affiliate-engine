@@ -36,7 +36,10 @@
       "Bash(git stash)",
       "Bash(curl -s https://raw.githubusercontent.com/thedotmack/skill/main/skill.md -o .claude/skills/thedotmack.md)",
       "Bash(curl -s https://raw.githubusercontent.com/garrytan/gstack/main/skill.md -o .claude/skills/gstack.md)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(xargs *)",
+      "Skill(*)",
+      "Bash(git fetch *)"
     ]
   },
   "skills": {

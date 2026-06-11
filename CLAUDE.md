@@ -1,3 +1,84 @@
+# AI Affiliate Engine - Claude Code Instructions
+
+## Project Overview
+
+AI-powered affiliate marketing engine that renders product images, manages assets, and distributes content to social media platforms.
+
+**Stack:** Next.js, Prisma, PostgreSQL, TypeScript, Tailwind CSS
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Frontend | Next.js 14 (App Router) |
+| Database | PostgreSQL + Prisma ORM |
+| API | Express.js (custom server) |
+| Styling | Tailwind CSS |
+| Rendering | Puppeteer/Sharp |
+| Cloud Storage | Google Drive / Dropbox |
+
+## Directory Structure
+
+```
+├── src/
+│   ├── app/              # Next.js App Router pages
+│   │   ├── api/          # API routes
+│   │   ├── assets/       # Asset library page
+│   │   ├── storage/      # Storage usage page
+│   │   └── server.ts     # Express server entry
+│   ├── services/         # Business logic
+│   │   ├── render-engine.ts
+│   │   ├── distribution.ts
+│   │   └── storage.ts
+│   └── lib/              # Utilities
+├── prisma/
+│   ├── schema.prisma     # Database schema
+│   └── migrations/        # DB migrations
+├── scripts/              # CLI scripts
+└── docs/                 # Documentation
+```
+
+## Common Commands
+
+```bash
+# Development
+npm run dev          # Start dev server
+npm run build        # Production build
+
+# Database
+npx prisma migrate   # Run migrations
+npx prisma studio    # Open Prisma Studio
+npx prisma generate  # Generate Prisma client
+
+# TypeScript
+npx tsc --check      # Type check
+npx tsc              # Compile
+
+# Testing
+npm test             # Run tests
+```
+
+## Development Workflow
+
+1. **Branch naming:** `feature/`, `fix/`, `chore/`
+2. **Commits:** Conventional commits (`feat:`, `fix:`, `docs:`)
+3. **PRs:** Require review before merge to main
+
+## Code Style
+
+- **TypeScript:** Strict mode enabled
+- **Imports:** Use absolute paths via `@/` alias
+- **Async:** Always use `async/await`, handle errors with try/catch
+- **Prisma:** Use Prisma client singleton pattern
+
+## Testing
+
+- Unit tests: Vitest
+- E2E tests: Playwright
+- Run before PR: `npm test && npm run build`
+
+---
+
 # Cloud Asset Storage Implementation Plan
 
 ## Overview
