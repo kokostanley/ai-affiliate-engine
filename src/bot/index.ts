@@ -12,18 +12,159 @@ import * as os from 'os';
 import * as path from 'path';
 
 // ============================================
+// STARTUP VALIDATION - CRITICAL
+// ============================================
+
+function validateEnvironment() {
+  const errors: string[] = [];
+
+  // Required environment variables
+  if (!process.env.TELEGRAM_BOT_TOKEN) {
+    errors.push('TELEGRAM_BOT_TOKEN is required');
+  }
+
+  if (!process.env.DATABASE_URL) {
+    errors.push('DATABASE_URL is required');
+  }
+
+  // AI Configuration
+  if (!process.env.AI_API_KEY || process.env.AI_API_KEY === 'dummy_key' || process.env.AI_API_KEY === 'dummy_token') {
+    console.warn('⚠️ AI_API_KEY not configured - using placeholder content');
+  }
+
+  // Zernio keys (at least one should be configured)
+  const zernioKeys = [
+    process.env.ZERNIO_CEPAT_KEY_1,
+    process.env.ZERNIO_CEPAT_KEY_2,
+    process.env.ZERNIO_CRYPTO_KEY_1,
+    process.env.ZERNIO_CRYPTO_KEY_2,
+  ].filter(Boolean);
+
+  if (zernioKeys.length === 0) {
+    console.warn('⚠️ No Zernio API keys configured - distribution will fail');
+  }
+
+  if (errors.length > 0) {
+    console.error('❌ STARTUP VALIDATION FAILED:');
+    errors.forEach(e => console.error('   - ' + e));
+    throw new Error('Missing required environment variables: ' + errors.join(', '));
+  }
+
+  console.log('✅ Environment validation passed');
+}
+
+validateEnvironment();
+
+// ============================================
 // CONFIG
 // ============================================
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const ADMIN_CHAT_ID = process.env.TELEGRAM_CHAT_ID || '';
 
-const prisma = new PrismaClient();
+// ============================================
+// RATE LIMITING - SECURITY FIX
+// ============================================
+
+interface RateLimitEntry {
+  count: number;
+  firstRequest: number;
+  burstCount: number;
+  burstStart: number;
+}
+
+const rateLimitMap = new Map<string, RateLimitEntry>();
+
+// Rate limit: 30 commands per minute, burst of 10
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_BURST = 10;
+const RATE_LIMIT_BURST_WINDOW = 5000; // 5 seconds
+
+function checkRateLimit(telegramId: string): { allowed: boolean; retryAfter?: number; message?: string } {
+  const now = Date.now();
+  const entry = rateLimitMap.get(telegramId);
+
+  // Check burst limit first (prevents spam)
+  if (entry) {
+    // Reset burst if window expired
+    if (now - entry.burstStart > RATE_LIMIT_BURST_WINDOW) {
+      entry.burstCount = 0;
+      entry.burstStart = now;
+    }
+
+    // Check burst limit
+    if (entry.burstCount >= RATE_LIMIT_BURST) {
+      const retryAfter = Math.ceil((RATE_LIMIT_BURST_WINDOW - (now - entry.burstStart)) / 1000);
+      return {
+        allowed: false,
+        retryAfter,
+        message: `⏳ Rate limit exceeded. Slow down! Try again in ${retryAfter}s.\n\n(You can send ${RATE_LIMIT_MAX} commands/minute)`,
+      };
+    }
+
+    // Check sliding window limit
+    if (now - entry.firstRequest < RATE_LIMIT_WINDOW) {
+      if (entry.count >= RATE_LIMIT_MAX) {
+        const retryAfter = Math.ceil((RATE_LIMIT_WINDOW - (now - entry.firstRequest)) / 1000);
+        return {
+          allowed: false,
+          retryAfter,
+          message: `⏳ Too many commands! Please wait ${retryAfter}s before trying again.\n\nLimit: ${RATE_LIMIT_MAX} commands/minute`,
+        };
+      }
+      entry.count++;
+      entry.burstCount++;
+    } else {
+      // Reset window
+      entry.count = 1;
+      entry.firstRequest = now;
+      entry.burstCount++;
+      entry.burstStart = now;
+    }
+  } else {
+    rateLimitMap.set(telegramId, {
+      count: 1,
+      firstRequest: now,
+      burstCount: 1,
+      burstStart: now,
+    });
+  }
+
+  return { allowed: true };
+}
+
+// Cleanup old entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap.entries()) {
+    if (now - entry.firstRequest > RATE_LIMIT_WINDOW * 2) {
+      rateLimitMap.delete(key);
+    }
+  }
+}, 300000);
+
+console.log('✅ Rate limiting enabled: ' + RATE_LIMIT_MAX + '/min, burst ' + RATE_LIMIT_BURST);
+
+// ============================================
+// INPUT LENGTH LIMITS - SECURITY FIX
+// ============================================
+
+const MAX_LINK_LENGTH = 2000;
+const MAX_COMMAND_ARGS = 500;
+
+function validateInputLength(input: string, maxLength: number, type: string): string | null {
+  if (input.length > maxLength) {
+    return `❌ ${type} too long (max ${maxLength} chars). Your input: ${input.length} chars.`;
+  }
+  return null;
+}
 
 // ============================================
 // BOT INSTANCE (Grammy)
 // ============================================
 
+const prisma = new PrismaClient();
 const bot = new Bot(BOT_TOKEN);
 
 // ============================================
@@ -730,6 +871,16 @@ Just send the link!`);
   }
 
   const telegramId = String(ctx.from?.id);
+
+  // ============================================
+  // RATE LIMIT CHECK
+  // ============================================
+  const rateCheck = checkRateLimit(telegramId);
+  if (!rateCheck.allowed) {
+    await safeReply(ctx, rateCheck.message || 'Rate limit exceeded');
+    return;
+  }
+
   const session = await prisma.telegramSession.findUnique({ where: { telegramId } });
 
   if (!session?.activeBrandId) {
@@ -752,6 +903,13 @@ Just send the link!`);
     return;
   }
 
+  // Validate input length
+  const lengthError = validateInputLength(link, MAX_LINK_LENGTH, 'Link');
+  if (lengthError) {
+    await safeReply(ctx, lengthError);
+    return;
+  }
+
   await safeReply(ctx, `⏳ Processing link...
 
 1. Scraping product info...`);
@@ -771,21 +929,21 @@ Just send the link!`);
     try {
       scrapedProduct = await scrapeProduct(link);
       console.log('[Add] Scraped product:', scrapedProduct.name, 'Price:', scrapedProduct.price);
+
+      // Validate scraped data - require valid product info
+      if (!scrapedProduct.name || scrapedProduct.name === 'Product') {
+        await safeReply(ctx, `❌ Could not extract product name from link. Please try a different link.`);
+        return;
+      }
+
+      if (!scrapedProduct.price || scrapedProduct.price === 0) {
+        await safeReply(ctx, `⚠️ Product found but price is missing or zero. Please try a different link.`);
+        return;
+      }
     } catch (scrapeError) {
       console.error('[Add] Scrape error:', scrapeError);
-      await safeReply(ctx, `⚠️ Could not scrape product details. Using minimal data.`);
-      scrapedProduct = {
-        name: 'Product',
-        price: 0,
-        imageUrl: null,
-        description: null,
-        category: 'Uncategorized',
-        platform: detectPlatformFromLink(link),
-        platformDisplay: detectPlatformFromLink(link),
-        affiliateLink: link,
-        available: true,
-        url: link,
-      };
+      await safeReply(ctx, `❌ Failed to scrape product. Please verify the link is valid and accessible.`);
+      return;
     }
 
     const platform = scrapedProduct.platform || detectPlatformFromLink(link);
@@ -1097,6 +1255,14 @@ Flow:
 6. Creates Zernio draft`);
     return;
   }
+
+  // Rate limit check
+  const rateCheck = checkRateLimit(String(ctx.from?.id));
+  if (!rateCheck.allowed) {
+    await safeReply(ctx, rateCheck.message || 'Rate limit exceeded');
+    return;
+  }
+
   const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
   if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
   const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
@@ -1104,6 +1270,10 @@ Flow:
 
   const link = args.startsWith('http') ? args : null;
   if (!link) { await safeReply(ctx, 'Invalid link'); return; }
+
+  // Validate input length
+  const lengthError = validateInputLength(link, MAX_LINK_LENGTH, 'Link');
+  if (lengthError) { await safeReply(ctx, lengthError); return; }
 
   await safeReply(ctx, `⏳ Processing carousel...
 
@@ -1344,6 +1514,14 @@ Just send the link!`);
     return;
   }
   logCommand('addvideo', args, String(ctx.from?.id));
+
+  // Rate limit check
+  const rateCheck = checkRateLimit(String(ctx.from?.id));
+  if (!rateCheck.allowed) {
+    await safeReply(ctx, rateCheck.message || 'Rate limit exceeded');
+    return;
+  }
+
   const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
   if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
   const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
@@ -1351,6 +1529,10 @@ Just send the link!`);
 
   const link = args.startsWith('http') ? args : null;
   if (!link) { await safeReply(ctx, 'Invalid link'); return; }
+
+  // Validate input length
+  const lengthError = validateInputLength(link, MAX_LINK_LENGTH, 'Link');
+  if (lengthError) { await safeReply(ctx, lengthError); return; }
 
   await safeReply(ctx, `⏳ Processing video...
 

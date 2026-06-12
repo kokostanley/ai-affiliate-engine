@@ -11,6 +11,34 @@ const router = Router();
 const prisma = new PrismaClient();
 
 // ============================================
+// API AUTHENTICATION MIDDLEWARE
+// ============================================
+
+function requireAuth(req: any, res: any, next: any) {
+  const apiKey = req.headers['x-api-key'];
+  const validKey = process.env.API_SECRET || process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!apiKey) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'API key required' },
+    });
+  }
+
+  if (apiKey !== validKey) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHORIZED', message: 'Invalid API key' },
+    });
+  }
+
+  next();
+}
+
+// Apply auth to all routes
+router.use(requireAuth);
+
+// ============================================
 // GET /api/assets
 // List all assets with filters
 // ============================================
@@ -432,8 +460,45 @@ router.post('/upload', async (req, res) => {
       });
     }
 
+    // ============================================
+    // PATH TRAVERSAL PROTECTION
+    // ============================================
+    const path = require('path');
+    const fs = require('fs');
+
+    // Normalize and validate the path
+    const normalizedPath = path.normalize(localPath).replace(/\\/g, '/');
+
+    // Reject path traversal attempts
+    if (normalizedPath.includes('..') || normalizedPath.startsWith('/') || /^[a-zA-Z]:/.test(normalizedPath)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PATH', message: 'Path traversal not allowed' },
+      });
+    }
+
+    // Get allowed directory
+    const allowedDir = path.resolve(process.env.LOCAL_TEMP_DIR || './tmp');
+    const requestedPath = path.resolve(process.cwd(), normalizedPath);
+
+    // Ensure the file is within allowed directory
+    if (!requestedPath.startsWith(allowedDir)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PATH', message: 'File must be within allowed directory' },
+      });
+    }
+
+    // Verify file exists and is actually a file
+    if (!fs.existsSync(requestedPath) || !fs.statSync(requestedPath).isFile()) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PATH', message: 'File does not exist' },
+      });
+    }
+
     const result = await cloudStorage.uploadFile(
-      localPath,
+      requestedPath,
       filename || fileName || 'uploaded_file',
       {
         provider: provider as any,
