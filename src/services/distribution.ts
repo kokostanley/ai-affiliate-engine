@@ -161,16 +161,21 @@ export async function createDistribution(
       console.log(`[Distribution] Generated tracking links for item ${item.id}`);
     }
 
+    // Get product's affiliate link for tracking
+    const product = await prisma.product.findUnique({ where: { id: input.productId } });
+    const productAffiliateLink = product?.affiliateLink || '';
+
     // Generate link placement strategy
-    // Get affiliate link from the generated link result or brand settings
+    // Get affiliate link from: product > brand settings > generated links
     const brandSettings = brand.settings ? JSON.parse(brand.settings) : {};
     const brandAffiliateLink = brand.affiliateLink || brandSettings.defaultAffiliateLink || '';
+    const finalAffiliateLink = productAffiliateLink || brandAffiliateLink || linkResult.affiliateLink || '';
 
     const placement = await linkPlacement.generateLinkPlacement({
       brandId: brand.id,
       platform: input.platform,
       contentType: input.contentType,
-      affiliateLink: linkResult.trackingLink || linkResult.affiliateLink || brandAffiliateLink,
+      affiliateLink: linkResult.trackingLink || finalAffiliateLink,
       trackingUrl: linkResult.trackingLink,
     });
 
@@ -195,7 +200,7 @@ export async function createDistribution(
         distributionId: item.id,
         productId: input.productId,
         brandId: brand.id,
-        originalLink: brandAffiliateLink || linkResult.affiliateLink || '',
+        originalLink: finalAffiliateLink,
         trackingLink: linkResult.trackingLink,
         shortCode: linkTracking.generateShortCode(),
         platform: input.platform,
