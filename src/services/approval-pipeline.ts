@@ -195,6 +195,19 @@ async function executeVideoPipeline(
       steps.push(`✅ Distribution: ${distResult.item.id.substring(0, 8)}...`);
       steps.push('📤 Status: WAITING_PIPPIT_UPLOAD');
       steps.push('📋 Use /pippit to generate upload package');
+      result.distributionId = distResult.item.id;
+
+      // Get tracking record
+      try {
+        const tracking = await linkTracking.getTrackingByDistributionId(distResult.item.id);
+        if (tracking) {
+          result.trackingId = tracking.id;
+          result.trackingLink = tracking.trackingLink || tracking.originalLink;
+          steps.push(`📊 Tracking: ${result.trackingLink?.substring(0, 50)}...`);
+        }
+      } catch (trackingError) {
+        console.error('[Pipeline] Failed to get tracking:', trackingError);
+      }
     } else {
       steps.push(`❌ Distribution failed: ${distResult.error}`);
       result.error = distResult.error;
