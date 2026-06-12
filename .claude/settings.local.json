@@ -39,7 +39,15 @@
       "WebFetch(domain:github.com)",
       "Bash(xargs *)",
       "Skill(*)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(git reset *)",
+      "Bash(sqlite3 prisma/dev.db \"SELECT id, status, approvalStatus, videoUrl, thumbnailUrl FROM DistributionQueue ORDER BY createdAt DESC LIMIT 5;\")",
+      "Bash(git restore *)",
+      "Bash(tasklist)",
+      "Bash(findstr /i \"node\")",
+      "Bash(findstr /i \"bot\")"
     ]
   },
   "skills": {

@@ -791,35 +791,48 @@ Just send the link!`);
     const platform = scrapedProduct.platform || detectPlatformFromLink(link);
     const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Check duplicate
-    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
-    if (existing) {
-      await safeReply(ctx, `Link exists: ${existing.name}\n\nContent already created for this product.`);
-      return;
+    // === STEP 2: REUSE EXISTING PRODUCT OR CREATE NEW ===
+    let product = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    let isNewProduct = false;
+
+    if (product) {
+      console.log('[Add] Reusing existing product:', product.id, product.name);
+      // Update price/image if scraped data is better
+      if (scrapedProduct.price > 0 && product.price === 0) {
+        product = await prisma.product.update({
+          where: { id: product.id },
+          data: {
+            price: scrapedProduct.price,
+            commissionAmount: scrapedProduct.price * 0.1,
+            imageUrl: scrapedProduct.imageUrl || product.imageUrl,
+          },
+        });
+        console.log('[Add] Updated product price:', product.price);
+      }
+    } else {
+      product = await prisma.product.create({
+        data: {
+          name: scrapedProduct.name || 'Product',
+          slug,
+          category: scrapedProduct.category || 'Uncategorized',
+          price: scrapedProduct.price || 0,
+          commission: 10,
+          commissionAmount: (scrapedProduct.price || 0) * 0.1,
+          affiliatePlatform: scrapedProduct.platformDisplay || platform,
+          affiliateLink: link,
+          imageUrl: scrapedProduct.imageUrl || null,
+          description: scrapedProduct.description || null,
+          status: 'ACTIVE',
+        },
+      });
+      isNewProduct = true;
+      console.log('[Add] Product created:', product.id);
+
+      // === STEP 3: CREATE LINK ===
+      await prisma.link.create({
+        data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' },
+      });
     }
-
-    // === STEP 2: CREATE PRODUCT ===
-    const product = await prisma.product.create({
-      data: {
-        name: scrapedProduct.name || 'Product',
-        slug,
-        category: scrapedProduct.category || 'Uncategorized',
-        price: scrapedProduct.price || 0,
-        commission: 10,
-        commissionAmount: (scrapedProduct.price || 0) * 0.1,
-        affiliatePlatform: scrapedProduct.platformDisplay || platform,
-        affiliateLink: link,
-        imageUrl: scrapedProduct.imageUrl || null,
-        description: scrapedProduct.description || null,
-        status: 'ACTIVE',
-      },
-    });
-    console.log('[Add] Product created:', product.id);
-
-    // === STEP 3: CREATE LINK ===
-    await prisma.link.create({
-      data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' },
-    });
 
     // === STEP 4: CREATE TRACKING RECORD ===
     let trackingId = null;
@@ -1121,29 +1134,44 @@ Flow:
     const platform = scrapedProduct.platform || detectPlatformFromLink(link);
     const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Check duplicate
-    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
-    if (existing) { await safeReply(ctx, `Link exists: ${existing.name}`); return; }
+    // === STEP 2: REUSE EXISTING PRODUCT OR CREATE NEW ===
+    let product = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    let isNewProduct = false;
 
-    // === STEP 2: CREATE PRODUCT ===
-    const product = await prisma.product.create({
-      data: {
-        name: scrapedProduct.name || 'Product',
-        slug,
-        category: scrapedProduct.category || 'Uncategorized',
-        price: scrapedProduct.price || 0,
-        commission: 10,
-        commissionAmount: (scrapedProduct.price || 0) * 0.1,
-        affiliatePlatform: scrapedProduct.platformDisplay || platform,
-        affiliateLink: link,
-        imageUrl: scrapedProduct.imageUrl || null,
-        description: scrapedProduct.description || null,
-        status: 'ACTIVE',
-      },
-    });
+    if (product) {
+      console.log('[AddCarousel] Reusing existing product:', product.id, product.name);
+      if (scrapedProduct.price > 0 && product.price === 0) {
+        product = await prisma.product.update({
+          where: { id: product.id },
+          data: {
+            price: scrapedProduct.price,
+            commissionAmount: scrapedProduct.price * 0.1,
+            imageUrl: scrapedProduct.imageUrl || product.imageUrl,
+          },
+        });
+      }
+    } else {
+      product = await prisma.product.create({
+        data: {
+          name: scrapedProduct.name || 'Product',
+          slug,
+          category: scrapedProduct.category || 'Uncategorized',
+          price: scrapedProduct.price || 0,
+          commission: 10,
+          commissionAmount: (scrapedProduct.price || 0) * 0.1,
+          affiliatePlatform: scrapedProduct.platformDisplay || platform,
+          affiliateLink: link,
+          imageUrl: scrapedProduct.imageUrl || null,
+          description: scrapedProduct.description || null,
+          status: 'ACTIVE',
+        },
+      });
+      isNewProduct = true;
+      console.log('[AddCarousel] Product created:', product.id);
 
-    // === STEP 3: CREATE LINK ===
-    await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+      // === STEP 3: CREATE LINK ===
+      await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+    }
 
     // === STEP 4: CREATE TRACKING RECORD ===
     let trackingId = null;
@@ -1353,29 +1381,44 @@ Just send the link!`);
     const platform = scrapedProduct.platform || detectPlatformFromLink(link);
     const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Check duplicate
-    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
-    if (existing) { await safeReply(ctx, `Link exists: ${existing.name}`); return; }
+    // === STEP 2: REUSE EXISTING PRODUCT OR CREATE NEW ===
+    let product = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    let isNewProduct = false;
 
-    // === STEP 2: CREATE PRODUCT ===
-    const product = await prisma.product.create({
-      data: {
-        name: scrapedProduct.name || 'Product',
-        slug,
-        category: scrapedProduct.category || 'Uncategorized',
-        price: scrapedProduct.price || 0,
-        commission: 10,
-        commissionAmount: (scrapedProduct.price || 0) * 0.1,
-        affiliatePlatform: scrapedProduct.platformDisplay || platform,
-        affiliateLink: link,
-        imageUrl: scrapedProduct.imageUrl || null,
-        description: scrapedProduct.description || null,
-        status: 'ACTIVE',
-      },
-    });
+    if (product) {
+      console.log('[AddCarousel] Reusing existing product:', product.id, product.name);
+      if (scrapedProduct.price > 0 && product.price === 0) {
+        product = await prisma.product.update({
+          where: { id: product.id },
+          data: {
+            price: scrapedProduct.price,
+            commissionAmount: scrapedProduct.price * 0.1,
+            imageUrl: scrapedProduct.imageUrl || product.imageUrl,
+          },
+        });
+      }
+    } else {
+      product = await prisma.product.create({
+        data: {
+          name: scrapedProduct.name || 'Product',
+          slug,
+          category: scrapedProduct.category || 'Uncategorized',
+          price: scrapedProduct.price || 0,
+          commission: 10,
+          commissionAmount: (scrapedProduct.price || 0) * 0.1,
+          affiliatePlatform: scrapedProduct.platformDisplay || platform,
+          affiliateLink: link,
+          imageUrl: scrapedProduct.imageUrl || null,
+          description: scrapedProduct.description || null,
+          status: 'ACTIVE',
+        },
+      });
+      isNewProduct = true;
+      console.log('[AddCarousel] Product created:', product.id);
 
-    // === STEP 3: CREATE LINK ===
-    await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+      // === STEP 3: CREATE LINK ===
+      await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+    }
 
     // === STEP 4: CREATE TRACKING RECORD ===
     let trackingId = null;
