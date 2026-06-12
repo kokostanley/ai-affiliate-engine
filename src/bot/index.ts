@@ -964,6 +964,9 @@ Just send the link!`);
           format: vp.format,
           hook: vp.hook,
           voiceOver: vp.voiceOver,
+          sceneBreakdown: vp.sceneBreakdown,
+          onScreenText: vp.onScreenText,
+          suggestedMusic: vp.suggestedMusic,
           status: 'DRAFT',
         },
       });
@@ -980,6 +983,8 @@ Just send the link!`);
           layout: ip.layout,
           background: ip.background,
           visualMood: ip.visualMood,
+          productPlacement: ip.productPlacement,
+          textOverlay: ip.textOverlay,
           status: 'DRAFT',
         },
       });
@@ -1257,10 +1262,10 @@ Flow:
 
     // === STEP 9: CREATE VIDEO/IMAGE PROMPTS ===
     for (const vp of contentPack.videoPrompts) {
-      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, status: 'DRAFT' } });
+      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, sceneBreakdown: vp.sceneBreakdown, onScreenText: vp.onScreenText, suggestedMusic: vp.suggestedMusic, status: 'DRAFT' } });
     }
     for (const ip of contentPack.imagePrompts) {
-      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, status: 'DRAFT' } });
+      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, productPlacement: ip.productPlacement, textOverlay: ip.textOverlay, status: 'DRAFT' } });
     }
 
     // === STEP 10: UPDATE TRACKING STAGE ===
@@ -1504,10 +1509,10 @@ Just send the link!`);
 
     // === STEP 9: CREATE VIDEO/IMAGE PROMPTS ===
     for (const vp of contentPack.videoPrompts) {
-      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, status: 'DRAFT' } });
+      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, sceneBreakdown: vp.sceneBreakdown, onScreenText: vp.onScreenText, suggestedMusic: vp.suggestedMusic, status: 'DRAFT' } });
     }
     for (const ip of contentPack.imagePrompts) {
-      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, status: 'DRAFT' } });
+      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, productPlacement: ip.productPlacement, textOverlay: ip.textOverlay, status: 'DRAFT' } });
     }
 
     // === STEP 10: UPDATE TRACKING STAGE ===

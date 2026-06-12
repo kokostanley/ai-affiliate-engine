@@ -185,37 +185,42 @@ model ContentVariant {
 }
 
 model VideoPrompt {
-  id        String   @id @default(cuid())
-  productId String
-  product   Product  @relation(fields: [productId], references: [id])
-  contentId String?
-  content   Content? @relation(fields: [contentId], references: [id])
-  tool      String
-  prompt    String
-  duration  Int?
-  format    String?
-  hook      String?
-  voiceOver String?
-  status    String   @default("DRAFT")
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  contentId     String?
+  content       Content? @relation(fields: [contentId], references: [id])
+  tool          String
+  prompt        String
+  duration      Int?
+  format        String?
+  hook          String?
+  voiceOver     String?
+  sceneBreakdown String?
+  onScreenText  String?
+  suggestedMusic String?
+  status        String   @default("DRAFT")
+  createdAt     DateTime @default(now())
 
   @@index([tool])
   @@index([status])
 }
 
 model ImagePrompt {
-  id         String   @id @default(cuid())
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id])
-  contentId  String?
-  content    Content? @relation(fields: [contentId], references: [id])
-  imageType  String
-  prompt     String
-  layout     String?
-  background String?
-  visualMood String?
-  status     String   @default("DRAFT")
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  contentId      String?
+  content        Content? @relation(fields: [contentId], references: [id])
+  imageType      String
+  prompt         String
+  layout         String?
+  background     String?
+  visualMood     String?
+  productPlacement String?
+  textOverlay    String?
+  status         String   @default("DRAFT")
+  createdAt      DateTime @default(now())
 
   @@index([imageType])
   @@index([status])
