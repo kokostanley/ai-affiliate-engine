@@ -443,12 +443,51 @@ async function executeCarouselPipeline(
     hashtags: (content.hashtags || '').split(',').filter(Boolean),
   });
 
-  if (distResult.success) {
-    steps.push('✅ Distribution created');
+  if (distResult.success && distResult.item) {
+    steps.push(`✅ Distribution: ${distResult.item.id.substring(0, 8)}...`);
+
+    // AUTO-APPROVE: Move distribution from DRAFT to QUEUED
+    // This triggers the DistributionWorker to auto-post to Zernio
+    await prisma.distributionQueue.update({
+      where: { id: distResult.item.id },
+      data: {
+        status: 'QUEUED',
+        approvalStatus: 'APPROVED',
+        approvedAt: new Date(),
+        approvedBy: 'auto-pipeline',
+      },
+    });
+    steps.push(`✅ Distribution auto-approved to QUEUED`);
+    steps.push(`🚀 Worker will post to Zernio automatically`);
+
+    // Get tracking record
+    const tracking = await linkTracking.getTrackingByDistributionId(distResult.item.id);
+    if (tracking) {
+      result.trackingId = tracking.id;
+      result.trackingLink = tracking.trackingLink || tracking.originalLink;
+      steps.push(`📊 Tracking: ${result.trackingLink?.substring(0, 50)}...`);
+    }
+
+    // AUTO-CREATE ZERNIO DRAFT
+    // Create Zernio draft immediately for faster posting
+    try {
+      const { createZernioDraft } = await import('./zernio');
+      const zernioResult = await createZernioDraft(distResult.item.id);
+      if (zernioResult.success) {
+        result.zernioPostId = zernioResult.postId;
+        steps.push(`✅ Zernio draft: ${zernioResult.postId.substring(0, 8)}...`);
+      }
+    } catch (zernioError) {
+      console.error('[Pipeline] Zernio draft failed:', zernioError);
+      steps.push(`⚠️ Zernio draft: ${(zernioError as Error).message}`);
+    }
+  } else {
+    steps.push(`⚠️ Distribution: ${distResult.error || 'skipped'}`);
   }
 
   steps.push('🎠 Carousel pipeline ready');
   result.success = true;
+  result.distributionId = distResult.item?.id || result.distributionId;
   return result;
 }
 

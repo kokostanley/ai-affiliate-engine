@@ -459,6 +459,29 @@ export async function executePosting(id: string): Promise<{ success: boolean; it
     };
     const zernioPlatform = platformMap[item.platform] || 'tiktok';
 
+    // For CAROUSEL content, aggregate media from asset files
+    let mediaItems: any[] = [];
+    if (item.contentType === 'CAROUSEL') {
+      // Get carousel slide URLs from asset files
+      const assetFiles = await prisma.assetFile.findMany({
+        where: {
+          productId: item.productId,
+          fileType: 'IMAGE',
+          uploadStatus: 'uploaded',
+          cloudUrl: { not: null },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 10, // Max 10 slides for carousel
+      });
+
+      mediaItems = assetFiles.map(file => ({
+        type: 'image',
+        url: file.cloudUrl,
+      }));
+
+      console.log(`[Distribution] Carousel: found ${mediaItems.length} slides`);
+    }
+
     const result = await zernio.postToZernio(availableAccount.zernioConfig.apiKey, {
       accountId: availableAccount.account.accountId,
       platforms: [{
@@ -466,12 +489,13 @@ export async function executePosting(id: string): Promise<{ success: boolean; it
         accountId: availableAccount.account.accountId,
       }],
       content: {
-        videoUrl: item.videoUrl || undefined,
-        thumbnailUrl: item.thumbnailUrl || undefined,
+        videoUrl: item.contentType !== 'CAROUSEL' ? (item.videoUrl || undefined) : undefined,
+        thumbnailUrl: item.contentType !== 'CAROUSEL' ? (item.thumbnailUrl || undefined) : undefined,
         caption: zernioCaption,
         hashtags,
         script: item.script || undefined,
         voiceoverUrl: item.voiceoverUrl || undefined,
+        mediaItems: mediaItems.length > 0 ? mediaItems : undefined,
       },
     });
 

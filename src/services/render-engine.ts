@@ -36,11 +36,13 @@ export interface CreateJobInput {
  */
 export async function createRenderJob(input: CreateJobInput): Promise<{ id: string; status: string } | null> {
   try {
-    // Check if job already exists for this package/tool
+    // Check if job already exists for this package/tool/prompt combination
+    // Include prompt to differentiate carousel slides (each slide has unique prompt)
     const existing = await prisma.renderJob.findFirst({
       where: {
         productionPackageId: input.productionPackageId,
         tool: input.tool,
+        prompt: input.prompt,  // Include prompt to differentiate slides
       },
     });
 

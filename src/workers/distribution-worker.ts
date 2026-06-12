@@ -75,27 +75,71 @@ class DistributionWorker {
 
     try {
       // Find items ready for posting
+      // For CAROUSEL, check if there are completed render jobs with assets
+      // For IMAGE/VIDEO, check videoUrl or thumbnailUrl
       const readyItems = await prisma.distributionQueue.findMany({
         where: {
           status: 'QUEUED',
           approvalStatus: 'APPROVED',
-          // Must have video or image
           OR: [
-            { videoUrl: { not: null } },
-            { thumbnailUrl: { not: null } },
+            // IMAGE with thumbnail
+            { contentType: 'IMAGE', thumbnailUrl: { not: null } },
+            // VIDEO with video URL
+            { contentType: 'VIDEO', videoUrl: { not: null } },
+            // CAROUSEL - check for completed render jobs with assets
+            { contentType: 'CAROUSEL' },
           ],
         },
         orderBy: { createdAt: 'asc' },
         take: WORKER_CONFIG.maxConcurrentPosts,
       });
 
-      if (readyItems.length === 0) {
+      // Filter out carousel items that don't have assets yet
+      const itemsWithAssets = await Promise.all(
+        readyItems.map(async (item) => {
+          if (item.contentType === 'CAROUSEL') {
+            // Check if carousel has completed render jobs with assets
+            const renderJobs = await prisma.renderJob.findMany({
+              where: {
+                productionPackage: {
+                  productId: item.productId,
+                },
+                jobType: 'IMAGE',
+                status: 'completed',
+              },
+              include: { productionPackage: true },
+            });
+
+            // Check for asset files from render jobs
+            const assetFiles = await prisma.assetFile.findMany({
+              where: {
+                productId: item.productId,
+                fileType: 'IMAGE',
+                uploadStatus: 'uploaded',
+                cloudUrl: { not: null },
+              },
+              orderBy: { createdAt: 'asc' },
+            });
+
+            // Only include if we have at least 3 carousel slides ready
+            if (assetFiles.length >= 3 || renderJobs.some(j => j.outputUrl)) {
+              return item;
+            }
+            return null;
+          }
+          return item;
+        })
+      );
+
+      const filteredItems = itemsWithAssets.filter(Boolean);
+
+      if (filteredItems.length === 0) {
         return;
       }
 
-      console.log(`[DistributionWorker] Found ${readyItems.length} item(s) ready for posting`);
+      console.log(`[DistributionWorker] Found ${filteredItems.length} item(s) ready for posting`);
 
-      for (const item of readyItems) {
+      for (const item of filteredItems) {
         await this.processItem(item.id);
       }
     } catch (error) {
