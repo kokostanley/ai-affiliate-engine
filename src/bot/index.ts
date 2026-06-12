@@ -697,11 +697,11 @@ bot.command('render', async (ctx) => {
 
 // ============================================
 // SINGLE COMMAND INTAKE WORKFLOW
-// /add [link] - AUTO: Product → Content → Auto-Approve → Generate → Zernio
+// /add [link] - AUTO: Scrape → Product → AI Content → Auto-Approve → Generate → Zernio
 // ============================================
 
 /**
- * Quick intake for IMAGE - auto-generates and creates Zernio draft
+ * Complete /add workflow with scraping and AI content generation
  */
 bot.command('add', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
@@ -717,12 +717,13 @@ Example:
 /add https://shopee.co.id/product/12345
 
 Flow (automatic):
-1. Creates product
-2. Creates content
-3. Auto-approves
-4. Generates image (DALL-E)
-5. Uploads to Google Drive
-6. Creates Zernio draft
+1. Scrapes product info from link
+2. Generates AI content (hooks, captions, CTAs, scripts)
+3. Creates quality scores
+4. Auto-approves
+5. Generates image (DALL-E)
+6. Uploads to Google Drive
+7. Creates Zernio draft
 
 Just send the link!`);
     return;
@@ -751,49 +752,86 @@ Just send the link!`);
     return;
   }
 
-  await safeReply(ctx, `IMAGE AUTO-POST
+  await safeReply(ctx, `⏳ Processing link...
 
-Creating product and generating...`);
+1. Scraping product info...`);
 
   try {
-    const platform = detectPlatform(link);
+    // === STEP 1: SCRAPE PRODUCT INFO ===
+    const { scrapeProduct, isValidAffiliateLink, detectPlatform: detectPlatformFromLink } = await import('../scraper');
+
+    // Validate link first
+    if (!isValidAffiliateLink(link)) {
+      await safeReply(ctx, `❌ Invalid affiliate link. Supported: Shopee, TikTok, Tokopedia, Lazada, Blibli, Bukalapak`);
+      return;
+    }
+
+    // Scrape product details
+    let scrapedProduct;
+    try {
+      scrapedProduct = await scrapeProduct(link);
+      console.log('[Add] Scraped product:', scrapedProduct.name, 'Price:', scrapedProduct.price);
+    } catch (scrapeError) {
+      console.error('[Add] Scrape error:', scrapeError);
+      await safeReply(ctx, `⚠️ Could not scrape product details. Using minimal data.`);
+      scrapedProduct = {
+        name: 'Product',
+        price: 0,
+        imageUrl: null,
+        description: null,
+        category: 'Uncategorized',
+        platform: detectPlatformFromLink(link),
+        platformDisplay: detectPlatformFromLink(link),
+        affiliateLink: link,
+        available: true,
+        url: link,
+      };
+    }
+
+    const platform = scrapedProduct.platform || detectPlatformFromLink(link);
     const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Check duplicate
     const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
     if (existing) {
-      await safeReply(ctx, `Link exists: ${existing.name}`);
+      await safeReply(ctx, `Link exists: ${existing.name}\n\nContent already created for this product.`);
       return;
     }
 
-    // 1. Create product
+    // === STEP 2: CREATE PRODUCT ===
     const product = await prisma.product.create({
       data: {
-        name: `Product ${new Date().toLocaleTimeString('id-ID')}`,
+        name: scrapedProduct.name || 'Product',
         slug,
-        category: 'Uncategorized',
-        price: 0,
+        category: scrapedProduct.category || 'Uncategorized',
+        price: scrapedProduct.price || 0,
         commission: 10,
-        commissionAmount: 0,
-        affiliatePlatform: platform,
+        commissionAmount: (scrapedProduct.price || 0) * 0.1,
+        affiliatePlatform: scrapedProduct.platformDisplay || platform,
         affiliateLink: link,
+        imageUrl: scrapedProduct.imageUrl || null,
+        description: scrapedProduct.description || null,
         status: 'ACTIVE',
       },
     });
+    console.log('[Add] Product created:', product.id);
 
-    // 2. Create link
+    // === STEP 3: CREATE LINK ===
     await prisma.link.create({
       data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' },
     });
 
-    // 2b. Create affiliate link tracking record
+    // === STEP 4: CREATE TRACKING RECORD ===
+    let trackingId = null;
+    let shortCode = null;
     try {
       const { createTrackingRecord, generateShortCode } = await import('../services/link-tracking');
+      shortCode = generateShortCode();
       const trackingResult = await createTrackingRecord({
         productId: product.id,
         brandId: brand.id,
         originalLink: link,
-        shortCode: generateShortCode(),
+        shortCode,
         platform: 'INSTAGRAM',
         contentType: 'IMAGE',
         provider: 'OPENAI_IMAGE',
@@ -801,30 +839,152 @@ Creating product and generating...`);
         utmMedium: 'bot',
         utmCampaign: brand.slug + '_image',
       });
-      if (trackingResult.success) {
-        console.log('[Add] Created tracking record: ' + trackingResult.tracking?.id);
+      if (trackingResult.success && trackingResult.tracking) {
+        trackingId = trackingResult.tracking.id;
+        console.log('[Add] Tracking record created:', trackingId);
       }
     } catch (trackingError) {
       console.error('[Add] Failed to create tracking record:', trackingError);
     }
 
-    // 3. Create content
+    // === STEP 5: GENERATE AI CONTENT ===
+    await safeReply(ctx, `2. Generating AI content...`);
+
+    const { generatePhase2Content } = await import('../lib/openai-content');
+    const contentPack = await generatePhase2Content({
+      productName: product.name,
+      productDescription: scrapedProduct.description || '',
+      productPrice: scrapedProduct.price || 0,
+      productCategory: scrapedProduct.category,
+      platform: 'ALL',
+    });
+    console.log('[Add] AI content generated:', contentPack.hooks.length, 'hooks,', contentPack.captions.length, 'captions');
+
+    // === STEP 6: CREATE CONTENT WITH VARIANTS ===
     const content = await prisma.content.create({
       data: {
         productId: product.id,
         contentType: 'PHASE2_IMAGE',
-        platform: 'INSTAGRAM',
-        hook: 'Auto-generated image content',
-        caption: 'Auto-generated content',
+        platform: 'ALL',
+        hook: contentPack.hooks[0] || '',
+        caption: contentPack.captions[0] || '',
+        script: contentPack.scripts[0] || '',
+        hashtags: contentPack.hashtags.slice(0, 30).join(','),
+        cta: contentPack.ctas[0] || '',
+        telegramText: contentPack.telegramText,
+        whatsappText: contentPack.whatsappText,
         status: 'DRAFT',
         approvalStatus: 'PENDING',
         tone: 'casual',
         language: 'id',
       },
     });
+    console.log('[Add] Content created:', content.id);
 
-    // 4. Auto-approve and trigger pipeline
-    await safeReply(ctx, `Product created. Auto-approving and generating image...`);
+    // === STEP 7: CREATE CONTENT VARIANTS ===
+    // Create hooks (up to 20)
+    for (let i = 0; i < Math.min(contentPack.hooks.length, 20); i++) {
+      await prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'HOOK',
+          variantIndex: i,
+          contentValue: contentPack.hooks[i],
+        },
+      });
+    }
+
+    // Create captions (up to 10)
+    for (let i = 0; i < Math.min(contentPack.captions.length, 10); i++) {
+      await prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CAPTION',
+          variantIndex: i,
+          contentValue: contentPack.captions[i],
+        },
+      });
+    }
+
+    // Create CTAs (up to 5)
+    for (let i = 0; i < Math.min(contentPack.ctas.length, 5); i++) {
+      await prisma.contentVariant.create({
+        data: {
+          contentId: content.id,
+          variantType: 'CTA',
+          variantIndex: i,
+          contentValue: contentPack.ctas[i],
+        },
+      });
+    }
+    console.log('[Add] Content variants created');
+
+    // === STEP 8: CREATE QUALITY SCORES ===
+    await prisma.qualityScore.create({
+      data: {
+        contentId: content.id,
+        hookScore: contentPack.qualityScores.hookScore,
+        overallScore: contentPack.qualityScores.overallScore,
+        bestPlatform: contentPack.qualityScores.bestPlatform,
+        bestHook: contentPack.qualityScores.bestHook,
+        bestCaption: contentPack.qualityScores.bestCaption,
+        bestCta: contentPack.qualityScores.bestCta,
+        clarityScore: contentPack.qualityScores.clarityScore,
+        conversionScore: contentPack.qualityScores.conversionScore,
+        platformFitScore: contentPack.qualityScores.platformFitScore,
+        recommendation: contentPack.qualityScores.recommendation,
+        shouldPost: contentPack.qualityScores.shouldPost,
+      },
+    });
+    console.log('[Add] Quality scores created');
+
+    // === STEP 9: CREATE VIDEO/IMAGE PROMPTS ===
+    // Video prompts
+    for (const vp of contentPack.videoPrompts) {
+      await prisma.videoPrompt.create({
+        data: {
+          productId: product.id,
+          contentId: content.id,
+          tool: vp.tool,
+          prompt: vp.prompt,
+          duration: vp.duration,
+          format: vp.format,
+          hook: vp.hook,
+          voiceOver: vp.voiceOver,
+          status: 'DRAFT',
+        },
+      });
+    }
+
+    // Image prompts
+    for (const ip of contentPack.imagePrompts) {
+      await prisma.imagePrompt.create({
+        data: {
+          productId: product.id,
+          contentId: content.id,
+          imageType: ip.imageType,
+          prompt: ip.prompt,
+          layout: ip.layout,
+          background: ip.background,
+          visualMood: ip.visualMood,
+          status: 'DRAFT',
+        },
+      });
+    }
+    console.log('[Add] Video/image prompts created');
+
+    // === STEP 10: UPDATE TRACKING STAGE ===
+    if (trackingId) {
+      try {
+        const { updatePipelineStage } = await import('../services/link-tracking');
+        await updatePipelineStage(trackingId, 'CONTENT_GENERATED', 'Content and variants generated via /add');
+      } catch (e) {
+        console.error('[Add] Failed to update tracking stage:', e);
+      }
+    }
+
+    // === STEP 11: AUTO-APPROVE AND TRIGGER PIPELINE ===
+    await safeReply(ctx, `3. Auto-approving and generating image...`);
 
     const { executeApprovalPipeline } = await import('../services/approval-pipeline');
     const result = await executeApprovalPipeline(content.id, {
@@ -842,12 +1002,20 @@ Creating product and generating...`);
     }
 
     // Build detailed response
-    let response = `✅ *IMAGE AUTO-POST COMPLETE*
+    let response = `✅ *ADD WORKFLOW COMPLETE*
 
 📦 *Product:* ${product.name}
-📋 *Content ID:* \`${content.id.substring(0, 12)}...\`
-🖼️ *Type:* IMAGE
+💰 *Price:* Rp ${(scrapedProduct.price || 0).toLocaleString('id-ID')}
+🏪 *Platform:* ${scrapedProduct.platformDisplay || platform}
 🏢 *Brand:* ${brand.name}
+
+📊 *Content Generated:*
+• Hooks: ${contentPack.hooks.length}
+• Captions: ${contentPack.captions.length}
+• CTAs: ${contentPack.ctas.length}
+• Scripts: ${contentPack.scripts.length}
+• Hashtags: ${contentPack.hashtags.length}
+• Quality Score: ${contentPack.qualityScores.overallScore}/100
 
 `;
     for (const step of result.steps) {
@@ -883,50 +1051,474 @@ Creating product and generating...`);
 
   } catch (error: any) {
     console.error('[Add] Error:', error);
-    await safeReply(ctx, `Error: ${error.message}`);
+    await safeReply(ctx, `❌ Error: ${error.message}`);
   }
 });
 
 
 
-// addcarousel - Add carousel
+// addcarousel - Add carousel with full scraping and AI content
 bot.command('addcarousel', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
   logCommand('addcarousel', args, String(ctx.from?.id));
-  if (!args) { await safeReply(ctx, '/addcarousel [link]'); return; }
+  if (!args) {
+    await safeReply(ctx, `CAROUSEL AUTO-POST
+
+Usage:
+/addcarousel [affiliate_link]
+
+Example:
+/addcarousel https://shopee.co.id/product/12345
+
+Flow:
+1. Scrapes product info
+2. Generates AI content
+3. Auto-approves
+4. Creates 5 carousel slides (DALL-E)
+5. Uploads to Google Drive
+6. Creates Zernio draft`);
+    return;
+  }
   const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
   if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
   const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
   if (!brand) { await safeReply(ctx, 'Brand error'); return; }
-  await safeReply(ctx, 'CAROUSEL creating...');
+
+  const link = args.startsWith('http') ? args : null;
+  if (!link) { await safeReply(ctx, 'Invalid link'); return; }
+
+  await safeReply(ctx, `⏳ Processing carousel...
+
+1. Scraping product info...`);
+
   try {
-    const p = detectPlatform(args);
-    if (await prisma.product.findFirst({ where: { affiliateLink: args } })) { await safeReply(ctx, 'Link exists'); return; }
-    const slug = 'prod_' + Date.now();
-    const product = await prisma.product.create({ data: { name: slug, slug, category: 'Uncategorized', price: 0, commission: 10, affiliatePlatform: p, affiliateLink: args, status: 'ACTIVE' } });
-    await prisma.link.create({ data: { slug, productId: product.id, originalLink: args, status: 'ACTIVE' } });
-    const content = await prisma.content.create({ data: { productId: product.id, contentType: 'PHASE2_CAROUSEL', platform: 'INSTAGRAM', hook: 'Carousel', caption: 'Carousel', status: 'DRAFT', approvalStatus: 'PENDING' } });
-    await safeReply(ctx, 'CAROUSEL created\nID: ' + content.id.substring(0,8));
+    // === STEP 1: SCRAPE PRODUCT INFO ===
+    const { scrapeProduct, isValidAffiliateLink, detectPlatform: detectPlatformFromLink } = await import('../scraper');
+
+    if (!isValidAffiliateLink(link)) {
+      await safeReply(ctx, `❌ Invalid affiliate link`);
+      return;
+    }
+
+    let scrapedProduct;
+    try {
+      scrapedProduct = await scrapeProduct(link);
+    } catch (scrapeError) {
+      scrapedProduct = {
+        name: 'Product',
+        price: 0,
+        imageUrl: null,
+        description: null,
+        category: 'Uncategorized',
+        platform: detectPlatformFromLink(link),
+        platformDisplay: detectPlatformFromLink(link),
+        affiliateLink: link,
+        available: true,
+        url: link,
+      };
+    }
+
+    const platform = scrapedProduct.platform || detectPlatformFromLink(link);
+    const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Check duplicate
+    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    if (existing) { await safeReply(ctx, `Link exists: ${existing.name}`); return; }
+
+    // === STEP 2: CREATE PRODUCT ===
+    const product = await prisma.product.create({
+      data: {
+        name: scrapedProduct.name || 'Product',
+        slug,
+        category: scrapedProduct.category || 'Uncategorized',
+        price: scrapedProduct.price || 0,
+        commission: 10,
+        commissionAmount: (scrapedProduct.price || 0) * 0.1,
+        affiliatePlatform: scrapedProduct.platformDisplay || platform,
+        affiliateLink: link,
+        imageUrl: scrapedProduct.imageUrl || null,
+        description: scrapedProduct.description || null,
+        status: 'ACTIVE',
+      },
+    });
+
+    // === STEP 3: CREATE LINK ===
+    await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+
+    // === STEP 4: CREATE TRACKING RECORD ===
+    let trackingId = null;
+    try {
+      const { createTrackingRecord, generateShortCode } = await import('../services/link-tracking');
+      const trackingResult = await createTrackingRecord({
+        productId: product.id,
+        brandId: brand.id,
+        originalLink: link,
+        shortCode: generateShortCode(),
+        platform: 'INSTAGRAM',
+        contentType: 'CAROUSEL',
+        provider: 'OPENAI_IMAGE',
+        utmSource: 'telegram',
+        utmMedium: 'bot',
+        utmCampaign: brand.slug + '_carousel',
+      });
+      if (trackingResult.success && trackingResult.tracking) {
+        trackingId = trackingResult.tracking.id;
+      }
+    } catch (e) { console.error('[AddCarousel] Tracking error:', e); }
+
+    // === STEP 5: GENERATE AI CONTENT ===
+    await safeReply(ctx, `2. Generating AI content...`);
+
+    const { generatePhase2Content } = await import('../lib/openai-content');
+    const contentPack = await generatePhase2Content({
+      productName: product.name,
+      productDescription: scrapedProduct.description || '',
+      productPrice: scrapedProduct.price || 0,
+      productCategory: scrapedProduct.category,
+      platform: 'ALL',
+    });
+
+    // === STEP 6: CREATE CONTENT ===
+    const content = await prisma.content.create({
+      data: {
+        productId: product.id,
+        contentType: 'PHASE2_CAROUSEL',
+        platform: 'INSTAGRAM',
+        hook: contentPack.hooks[0] || '',
+        caption: contentPack.captions[0] || '',
+        script: contentPack.scripts[0] || '',
+        hashtags: contentPack.hashtags.slice(0, 30).join(','),
+        cta: contentPack.ctas[0] || '',
+        telegramText: contentPack.telegramText,
+        whatsappText: contentPack.whatsappText,
+        status: 'DRAFT',
+        approvalStatus: 'PENDING',
+        tone: 'casual',
+        language: 'id',
+      },
+    });
+
+    // === STEP 7: CREATE CONTENT VARIANTS ===
+    for (let i = 0; i < Math.min(contentPack.hooks.length, 20); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'HOOK', variantIndex: i, contentValue: contentPack.hooks[i] } });
+    }
+    for (let i = 0; i < Math.min(contentPack.captions.length, 10); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'CAPTION', variantIndex: i, contentValue: contentPack.captions[i] } });
+    }
+    for (let i = 0; i < Math.min(contentPack.ctas.length, 5); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'CTA', variantIndex: i, contentValue: contentPack.ctas[i] } });
+    }
+
+    // === STEP 8: CREATE QUALITY SCORES ===
+    await prisma.qualityScore.create({
+      data: {
+        contentId: content.id,
+        hookScore: contentPack.qualityScores.hookScore,
+        overallScore: contentPack.qualityScores.overallScore,
+        bestPlatform: contentPack.qualityScores.bestPlatform,
+        bestHook: contentPack.qualityScores.bestHook,
+        bestCaption: contentPack.qualityScores.bestCaption,
+        bestCta: contentPack.qualityScores.bestCta,
+        clarityScore: contentPack.qualityScores.clarityScore,
+        conversionScore: contentPack.qualityScores.conversionScore,
+        platformFitScore: contentPack.qualityScores.platformFitScore,
+        recommendation: contentPack.qualityScores.recommendation,
+        shouldPost: contentPack.qualityScores.shouldPost,
+      },
+    });
+
+    // === STEP 9: CREATE VIDEO/IMAGE PROMPTS ===
+    for (const vp of contentPack.videoPrompts) {
+      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, status: 'DRAFT' } });
+    }
+    for (const ip of contentPack.imagePrompts) {
+      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, status: 'DRAFT' } });
+    }
+
+    // === STEP 10: UPDATE TRACKING STAGE ===
+    if (trackingId) {
+      try {
+        const { updatePipelineStage } = await import('../services/link-tracking');
+        await updatePipelineStage(trackingId, 'CONTENT_GENERATED', 'Carousel content generated');
+      } catch (e) { console.error(e); }
+    }
+
+    // === STEP 11: AUTO-APPROVE AND TRIGGER PIPELINE ===
+    await safeReply(ctx, `3. Auto-approving and generating carousel...`);
+
+    const { executeContentTypePipeline } = await import('../services/approval-pipeline');
+    const result = await executeContentTypePipeline(content.id, 'CAROUSEL', {
+      autoApprove: true,
+      provider: 'OPENAI_IMAGE',
+      platform: 'INSTAGRAM',
+      brandId: brand.id,
+    });
+
+    let response = `✅ *CAROUSEL WORKFLOW COMPLETE*
+
+📦 *Product:* ${product.name}
+💰 *Price:* Rp ${(scrapedProduct.price || 0).toLocaleString('id-ID')}
+🏪 *Platform:* ${scrapedProduct.platformDisplay || platform}
+🏢 *Brand:* ${brand.name}
+
+📊 *Content Generated:*
+• Hooks: ${contentPack.hooks.length}
+• Captions: ${contentPack.captions.length}
+• Quality Score: ${contentPack.qualityScores.overallScore}/100
+
+`;
+    for (const step of result.steps) {
+      response += step + '\n';
+    }
+
+    if (result.productionPackageId) {
+      response += `\n📦 *Package:* \`${result.productionPackageId.substring(0, 12)}...\``;
+    }
+    if (result.renderJobIds?.length > 0) {
+      response += `\n🎨 *Render Jobs:* ${result.renderJobIds.length} carousel slides`;
+    }
+    if (result.distributionId) {
+      response += `\n📨 *Distribution ID:* \`${result.distributionId.substring(0, 12)}...\``;
+    }
+
+    response += `\n\n💡 *Next:* /schedule [distribution_id] [datetime] to schedule`;
+
+    await safeReply(ctx, response);
+
   } catch (e) { await safeReply(ctx, 'Error: ' + e.message); }
 });
 
+// addvideo - Add video with full scraping and AI content (Pippit manual)
 bot.command('addvideo', async (ctx) => {
   const args = ctx.message.text.split(' ').slice(1).join(' ').trim();
-  if (!args) { await safeReply(ctx, '/addvideo [link]'); return; }
+  if (!args) {
+    await safeReply(ctx, `VIDEO AUTO-POST (Pippit Manual)
+
+Usage:
+/addvideo [affiliate_link]
+
+Example:
+/addvideo https://tiktok.com/shop/product/12345
+
+Flow:
+1. Scrapes product info
+2. Generates AI content
+3. Auto-approves
+4. Creates WAITING_UPLOAD package
+5. Use /pippit [contentId] to generate upload folder
+
+Just send the link!`);
+    return;
+  }
   logCommand('addvideo', args, String(ctx.from?.id));
   const session = await prisma.telegramSession.findUnique({ where: { telegramId: String(ctx.from?.id) } });
   if (!session?.activeBrandId) { await safeReply(ctx, '/brand cepatdapat'); return; }
   const brand = await prisma.brand.findUnique({ where: { id: session.activeBrandId } });
   if (!brand) { await safeReply(ctx, 'Brand error'); return; }
-  await safeReply(ctx, 'VIDEO creating...');
+
+  const link = args.startsWith('http') ? args : null;
+  if (!link) { await safeReply(ctx, 'Invalid link'); return; }
+
+  await safeReply(ctx, `⏳ Processing video...
+
+1. Scraping product info...`);
+
   try {
-    const p = detectPlatform(args);
-    if (await prisma.product.findFirst({ where: { affiliateLink: args } })) { await safeReply(ctx, 'Link exists'); return; }
-    const slug = 'prod_' + Date.now();
-    const product = await prisma.product.create({ data: { name: slug, slug, category: 'Uncategorized', price: 0, commission: 10, affiliatePlatform: p, affiliateLink: args, status: 'ACTIVE' } });
-    await prisma.link.create({ data: { slug, productId: product.id, originalLink: args, status: 'ACTIVE' } });
-    const content = await prisma.content.create({ data: { productId: product.id, contentType: 'PHASE2_FULL', platform: 'TIKTOK', hook: 'Video', caption: 'Video', status: 'DRAFT', approvalStatus: 'PENDING' } });
-    await safeReply(ctx, 'VIDEO created\nID: ' + content.id.substring(0,8));
+    // === STEP 1: SCRAPE PRODUCT INFO ===
+    const { scrapeProduct, isValidAffiliateLink, detectPlatform: detectPlatformFromLink } = await import('../scraper');
+
+    if (!isValidAffiliateLink(link)) {
+      await safeReply(ctx, `❌ Invalid affiliate link`);
+      return;
+    }
+
+    let scrapedProduct;
+    try {
+      scrapedProduct = await scrapeProduct(link);
+    } catch (scrapeError) {
+      scrapedProduct = {
+        name: 'Product',
+        price: 0,
+        imageUrl: null,
+        description: null,
+        category: 'Uncategorized',
+        platform: detectPlatformFromLink(link),
+        platformDisplay: detectPlatformFromLink(link),
+        affiliateLink: link,
+        available: true,
+        url: link,
+      };
+    }
+
+    const platform = scrapedProduct.platform || detectPlatformFromLink(link);
+    const slug = `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Check duplicate
+    const existing = await prisma.product.findFirst({ where: { affiliateLink: link } });
+    if (existing) { await safeReply(ctx, `Link exists: ${existing.name}`); return; }
+
+    // === STEP 2: CREATE PRODUCT ===
+    const product = await prisma.product.create({
+      data: {
+        name: scrapedProduct.name || 'Product',
+        slug,
+        category: scrapedProduct.category || 'Uncategorized',
+        price: scrapedProduct.price || 0,
+        commission: 10,
+        commissionAmount: (scrapedProduct.price || 0) * 0.1,
+        affiliatePlatform: scrapedProduct.platformDisplay || platform,
+        affiliateLink: link,
+        imageUrl: scrapedProduct.imageUrl || null,
+        description: scrapedProduct.description || null,
+        status: 'ACTIVE',
+      },
+    });
+
+    // === STEP 3: CREATE LINK ===
+    await prisma.link.create({ data: { slug, productId: product.id, originalLink: link, status: 'ACTIVE' } });
+
+    // === STEP 4: CREATE TRACKING RECORD ===
+    let trackingId = null;
+    try {
+      const { createTrackingRecord, generateShortCode } = await import('../services/link-tracking');
+      const trackingResult = await createTrackingRecord({
+        productId: product.id,
+        brandId: brand.id,
+        originalLink: link,
+        shortCode: generateShortCode(),
+        platform: 'TIKTOK',
+        contentType: 'VIDEO',
+        provider: 'PIPPIT_MANUAL',
+        utmSource: 'telegram',
+        utmMedium: 'bot',
+        utmCampaign: brand.slug + '_video',
+      });
+      if (trackingResult.success && trackingResult.tracking) {
+        trackingId = trackingResult.tracking.id;
+      }
+    } catch (e) { console.error('[AddVideo] Tracking error:', e); }
+
+    // === STEP 5: GENERATE AI CONTENT ===
+    await safeReply(ctx, `2. Generating AI content...`);
+
+    const { generatePhase2Content } = await import('../lib/openai-content');
+    const contentPack = await generatePhase2Content({
+      productName: product.name,
+      productDescription: scrapedProduct.description || '',
+      productPrice: scrapedProduct.price || 0,
+      productCategory: scrapedProduct.category,
+      platform: 'ALL',
+    });
+
+    // === STEP 6: CREATE CONTENT ===
+    const content = await prisma.content.create({
+      data: {
+        productId: product.id,
+        contentType: 'PHASE2_FULL',
+        platform: 'TIKTOK',
+        hook: contentPack.hooks[0] || '',
+        caption: contentPack.captions[0] || '',
+        script: contentPack.scripts[0] || '',
+        hashtags: contentPack.hashtags.slice(0, 30).join(','),
+        cta: contentPack.ctas[0] || '',
+        telegramText: contentPack.telegramText,
+        whatsappText: contentPack.whatsappText,
+        status: 'DRAFT',
+        approvalStatus: 'PENDING',
+        tone: 'casual',
+        language: 'id',
+      },
+    });
+
+    // === STEP 7: CREATE CONTENT VARIANTS ===
+    for (let i = 0; i < Math.min(contentPack.hooks.length, 20); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'HOOK', variantIndex: i, contentValue: contentPack.hooks[i] } });
+    }
+    for (let i = 0; i < Math.min(contentPack.captions.length, 10); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'CAPTION', variantIndex: i, contentValue: contentPack.captions[i] } });
+    }
+    for (let i = 0; i < Math.min(contentPack.ctas.length, 5); i++) {
+      await prisma.contentVariant.create({ data: { contentId: content.id, variantType: 'CTA', variantIndex: i, contentValue: contentPack.ctas[i] } });
+    }
+
+    // === STEP 8: CREATE QUALITY SCORES ===
+    await prisma.qualityScore.create({
+      data: {
+        contentId: content.id,
+        hookScore: contentPack.qualityScores.hookScore,
+        overallScore: contentPack.qualityScores.overallScore,
+        bestPlatform: contentPack.qualityScores.bestPlatform,
+        bestHook: contentPack.qualityScores.bestHook,
+        bestCaption: contentPack.qualityScores.bestCaption,
+        bestCta: contentPack.qualityScores.bestCta,
+        clarityScore: contentPack.qualityScores.clarityScore,
+        conversionScore: contentPack.qualityScores.conversionScore,
+        platformFitScore: contentPack.qualityScores.platformFitScore,
+        recommendation: contentPack.qualityScores.recommendation,
+        shouldPost: contentPack.qualityScores.shouldPost,
+      },
+    });
+
+    // === STEP 9: CREATE VIDEO/IMAGE PROMPTS ===
+    for (const vp of contentPack.videoPrompts) {
+      await prisma.videoPrompt.create({ data: { productId: product.id, contentId: content.id, tool: vp.tool, prompt: vp.prompt, duration: vp.duration, format: vp.format, hook: vp.hook, voiceOver: vp.voiceOver, status: 'DRAFT' } });
+    }
+    for (const ip of contentPack.imagePrompts) {
+      await prisma.imagePrompt.create({ data: { productId: product.id, contentId: content.id, imageType: ip.imageType, prompt: ip.prompt, layout: ip.layout, background: ip.background, visualMood: ip.visualMood, status: 'DRAFT' } });
+    }
+
+    // === STEP 10: UPDATE TRACKING STAGE ===
+    if (trackingId) {
+      try {
+        const { updatePipelineStage } = await import('../services/link-tracking');
+        await updatePipelineStage(trackingId, 'CONTENT_GENERATED', 'Video content generated');
+      } catch (e) { console.error(e); }
+    }
+
+    // === STEP 11: AUTO-APPROVE AND TRIGGER PIPELINE ===
+    await safeReply(ctx, `3. Auto-approving and creating Pippit package...`);
+
+    const { executeContentTypePipeline } = await import('../services/approval-pipeline');
+    const result = await executeContentTypePipeline(content.id, 'VIDEO', {
+      autoApprove: true,
+      provider: 'PIPPIT_MANUAL',
+      platform: 'TIKTOK',
+      brandId: brand.id,
+    });
+
+    let response = `✅ *VIDEO WORKFLOW COMPLETE*
+
+📦 *Product:* ${product.name}
+💰 *Price:* Rp ${(scrapedProduct.price || 0).toLocaleString('id-ID')}
+🏪 *Platform:* ${scrapedProduct.platformDisplay || platform}
+🏢 *Brand:* ${brand.name}
+
+📊 *Content Generated:*
+• Hooks: ${contentPack.hooks.length}
+• Captions: ${contentPack.captions.length}
+• Scripts: ${contentPack.scripts.length}
+• Quality Score: ${contentPack.qualityScores.overallScore}/100
+
+`;
+    for (const step of result.steps) {
+      response += step + '\n';
+    }
+
+    if (result.productionPackageId) {
+      response += `\n📦 *Package:* \`${result.productionPackageId.substring(0, 12)}...\``;
+    }
+    if (result.distributionId) {
+      response += `\n📨 *Distribution ID:* \`${result.distributionId.substring(0, 12)}...\``;
+    }
+
+    response += `\n\n📋 *NEXT STEPS:*
+1. /pippit ${content.id.substring(0, 8)} - Create upload folder
+2. Generate video at pippit.ai
+3. Upload MP4 to cloud
+4. /attachvideo ${content.id.substring(0, 8)} [cloudUrl]`;
+
+    await safeReply(ctx, response);
+
   } catch (e) { await safeReply(ctx, 'Error: ' + e.message); }
 });
 // /showflow - Show complete pipeline flow status
