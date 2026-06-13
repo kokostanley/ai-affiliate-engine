@@ -99,6 +99,7 @@ class DistributionWorker {
         readyItems.map(async (item) => {
           if (item.contentType === 'CAROUSEL') {
             // Check if carousel has completed render jobs with assets
+            // CRITICAL FIX: Ensure assets are from THIS distribution's production package
             const renderJobs = await prisma.renderJob.findMany({
               where: {
                 productionPackage: {
@@ -110,10 +111,17 @@ class DistributionWorker {
               include: { productionPackage: true },
             });
 
-            // Check for asset files from render jobs
+            // CRITICAL: Get assets linked to THIS specific distribution's package
+            const distPackage = await prisma.distributionQueue.findUnique({
+              where: { id: item.id },
+              select: { productId: true },
+            });
+
+            // Check for asset files from THIS package
             const assetFiles = await prisma.assetFile.findMany({
               where: {
                 productId: item.productId,
+                packageId: distPackage ? { not: null } : undefined, // Must have packageId
                 fileType: 'IMAGE',
                 uploadStatus: 'uploaded',
                 cloudUrl: { not: null },
@@ -121,10 +129,15 @@ class DistributionWorker {
               orderBy: { createdAt: 'asc' },
             });
 
-            // Only include if we have at least 3 carousel slides ready
-            if (assetFiles.length >= 3 || renderJobs.some(j => j.outputUrl)) {
+            // CRITICAL FIX: Only process if we have at least 3 carousel slides from THIS package
+            const hasEnoughSlides = assetFiles.length >= 3;
+            const hasCompletedJobs = renderJobs.length >= 3;
+
+            if (hasEnoughSlides || hasCompletedJobs) {
+              console.log(`[DistributionWorker] Carousel ${item.id}: ${assetFiles.length} slides ready`);
               return item;
             }
+            console.log(`[DistributionWorker] Carousel ${item.id}: waiting for more slides (${assetFiles.length}/3)`);
             return null;
           }
           return item;

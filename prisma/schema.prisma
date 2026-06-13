@@ -1,4 +1,6 @@
 // AI AFFILIATE ENGINE DATABASE SCHEMA
+// IMPORTANT: SQLite does not enforce foreign keys by default
+// Run: PRAGMA foreign_keys = ON; in your SQLite client
 
 generator client {
   provider = "prisma-client-js"
@@ -673,7 +675,7 @@ model AffiliateLinkTracking {
   // Link information
   originalLink    String
   trackingLink    String?
-  shortCode       String?  // Short URL slug for easy access
+  shortCode       String?  @unique // Short URL slug for easy access - MUST be unique
   utmSource       String?
   utmMedium       String?
   utmCampaign     String?
