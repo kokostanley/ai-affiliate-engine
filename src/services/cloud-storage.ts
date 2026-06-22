@@ -236,10 +236,12 @@ async function uploadToGoogleDrive(
     });
 
     const webViewLink = result.webViewLink || `https://drive.google.com/file/d/${result.id}/view`;
+    // Use direct download URL format for Zernio compatibility
+    const directUrl = `https://drive.google.com/uc?export=download&id=${result.id}`;
 
     return {
       success: true,
-      cloudUrl: webViewLink,
+      cloudUrl: directUrl,
       cloudFileId: result.id,
     };
   } catch (error: any) {

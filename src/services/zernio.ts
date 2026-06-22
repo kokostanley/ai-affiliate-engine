@@ -405,6 +405,10 @@ export async function getAvailableZernioKey(brandId: string): Promise<ZernioConf
     ],
   });
 
+  // Get brand slug to resolve actual API key from env
+  const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+  const brandSlug = brand?.slug || '';
+
   // Filter by account limit (not implementing full logic here)
   for (const config of configs) {
     // Check if this key has room for more accounts
@@ -413,10 +417,18 @@ export async function getAvailableZernioKey(brandId: string): Promise<ZernioConf
     });
 
     if (accountCount < config.accountLimit) {
+      // Get the actual API key from environment variable based on brand
+      let actualApiKey = config.apiKey;
+
+      // If database has placeholder or empty key, get from env
+      if (!actualApiKey || actualApiKey.startsWith('ZERNIO_KEY')) {
+        actualApiKey = getZernioKeyFromEnv(brandSlug) || config.apiKey;
+      }
+
       return {
         id: config.id,
         name: config.name,
-        apiKey: config.apiKey,
+        apiKey: actualApiKey,
         accountLimit: config.accountLimit,
         isActive: config.isActive,
       };

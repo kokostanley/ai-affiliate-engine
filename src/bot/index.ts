@@ -267,7 +267,7 @@ bot.command('start', async (ctx) => {
 
 Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI Phase 2.
 
-📋 *Commands:*
+📋 *Basic Commands:*
 • /brand - List atau pilih brand aktif
 • /currentbrand - Lihat brand aktif
 • /products - List produk
@@ -279,7 +279,17 @@ Selamat datang! Bot ini membantu Anda mengelola link affiliate dan konten AI Pha
 • /view [id] - Lihat detail konten
 • /ping - Test bot
 
-💡 *Tips:* Pilih brand dulu dengan /brand, lalu kirim link affiliate!
+⚡ *Automation Commands:*
+• /autopost on/off - Aktifkan/nonaktifkan auto-post
+• /autopost status - Lihat status automation
+• /schedule - Lihat jadwal posting hari ini
+• /pause [hours] - Jeda automation
+• /resume - Lanjutkan automation
+• /config - Lihat konfigurasi
+• /rotations - POV rotation info
+
+🤖 *Auto-Detect:*
+Kirim link Shopee/TikTok langsung, bot akan auto-detect dan tanya jenis konten!
 
 *Platforms:* Shopee, TikTok, Tokopedia, Lazada, Blibli, Bukalapak
 `;
@@ -292,27 +302,24 @@ bot.command('help', async (ctx) => {
 📖 *Panduan Penggunaan Phase 2*
 
 *Menambah Produk:*
-1. Kirim: /add [affiliate_link]
-2. Bot auto-generate Phase 2 content
+1. Kirim link langsung ke chat (auto-detect)
+   ATAU
+   Kirim: /add [affiliate_link]
+2. Pilih jenis konten (Image/Carousel/Video/Auto)
+3. Bot auto-generate dan schedule
+
+*Automation:*
+1. /autopost on - Aktifkan auto-post
+2. /schedule set 09:00,14:00,19:00 - Atur jadwal
+3. /pause - Jeda jika perlu
 
 *Generate Ulang:*
 1. Ketik: /generate2 [productId]
 2. Akan generate 20 hooks, 10 captions, dll
 
-*Approval Workflow:*
-1. Ketik /pending
-2. Pilih konten untuk review
-3. Klik ✅ Approve / ❌ Reject
-
-*Yang Didapat:*
-✅ 20 Hook variations
-✅ 10 Caption variations
-✅ 5 CTA variations
-✅ 5 Video scripts
-✅ 30 Hashtags
-✅ 4 Video AI prompts
-✅ 4 Image AI prompts
-✅ Quality score per content
+*Auto-Detect:*
+Kirim link Shopee/TikTok langsung ke chat!
+Bot akan otomatis detect dan tanya jenis konten.
 `;
   await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
@@ -916,7 +923,7 @@ Just send the link!`);
 
   try {
     // === STEP 1: SCRAPE PRODUCT INFO ===
-    const { scrapeProduct, isValidAffiliateLink, detectPlatform: detectPlatformFromLink } = await import('../scraper');
+    const { scrapeProduct, isValidAffiliateLink, detectPlatform: detectPlatformFromLink, getPlatformDisplay } = await import('../scraper');
 
     // Validate link first
     if (!isValidAffiliateLink(link)) {
@@ -926,24 +933,41 @@ Just send the link!`);
 
     // Scrape product details
     let scrapedProduct;
+    let usePlaceholderPrice = false;
+
     try {
       scrapedProduct = await scrapeProduct(link);
       console.log('[Add] Scraped product:', scrapedProduct.name, 'Price:', scrapedProduct.price);
 
       // Validate scraped data - require valid product info
       if (!scrapedProduct.name || scrapedProduct.name === 'Product') {
-        await safeReply(ctx, `❌ Could not extract product name from link. Please try a different link.`);
-        return;
+        // Try to extract name from URL as fallback
+        const urlMatch = link.match(/\/product\/([^\/\?]+)/i);
+        if (urlMatch) {
+          scrapedProduct.name = urlMatch[1].replace(/-/g, ' ').replace(/\d+$/, '').trim();
+          scrapedProduct.name = scrapedProduct.name.charAt(0).toUpperCase() + scrapedProduct.name.slice(1);
+        }
       }
 
+      // If price is missing, warn but continue with placeholder
       if (!scrapedProduct.price || scrapedProduct.price === 0) {
-        await safeReply(ctx, `⚠️ Product found but price is missing or zero. Please try a different link.`);
-        return;
+        scrapedProduct.price = 0; // Will use placeholder
+        usePlaceholderPrice = true;
+        console.log('[Add] Price missing, will use placeholder');
       }
     } catch (scrapeError) {
       console.error('[Add] Scrape error:', scrapeError);
-      await safeReply(ctx, `❌ Failed to scrape product. Please verify the link is valid and accessible.`);
-      return;
+      // Try to create product anyway with URL-based info
+      scrapedProduct = {
+        name: 'Product from ' + detectPlatformFromLink(link),
+        price: 0,
+        platform: detectPlatformFromLink(link),
+        platformDisplay: getPlatformDisplay(link),
+        affiliateLink: link,
+        available: true,
+        url: link,
+      };
+      usePlaceholderPrice = true;
     }
 
     const platform = scrapedProduct.platform || detectPlatformFromLink(link);
@@ -1181,7 +1205,7 @@ Just send the link!`);
     let response = `✅ *ADD WORKFLOW COMPLETE*
 
 📦 *Product:* ${product.name}
-💰 *Price:* Rp ${(scrapedProduct.price || 0).toLocaleString('id-ID')}
+💰 *Price:* Rp ${(scrapedProduct.price || 0).toLocaleString('id-ID')}${usePlaceholderPrice ? ' ⚠️ (placeholder)' : ''}
 🏪 *Platform:* ${scrapedProduct.platformDisplay || platform}
 🏢 *Brand:* ${brand.name}
 
@@ -2778,6 +2802,42 @@ bot.command('storage', async (ctx) => {
 });
 
 // ============================================
+// AUTOMATION COMMANDS
+// ============================================
+
+import {
+  handleAutopostCommand,
+  handleScheduleCommand,
+  handlePauseCommand,
+  handleResumeCommand,
+  handleConfigCommand,
+  handleRotationsCommand,
+} from './commands/automation';
+
+import {
+  handleLinkWithSelection,
+  handleProcessCallback,
+} from './handlers/link-detector';
+
+// /autopost - Manage automation
+bot.command('autopost', handleAutopostCommand);
+
+// /schedule - View/modify posting schedule
+bot.command('schedule', handleScheduleCommand);
+
+// /pause - Pause automation
+bot.command('pause', handlePauseCommand);
+
+// /resume - Resume automation
+bot.command('resume', handleResumeCommand);
+
+// /config - Show automation config
+bot.command('config', handleConfigCommand);
+
+// /rotations - View POV rotations
+bot.command('rotations', handleRotationsCommand);
+
+// ============================================
 // CALLBACK HANDLERS
 // ============================================
 
@@ -2966,7 +3026,7 @@ bot.callbackQuery(/^dist_(.+)$/, async (ctx) => {
 });
 
 // ============================================
-// TEXT HANDLER (for direct link submission)
+// TEXT HANDLER (for direct link submission + auto-detect)
 // ============================================
 
 bot.on('message:text', async (ctx) => {
@@ -2975,11 +3035,66 @@ bot.on('message:text', async (ctx) => {
   // Ignore commands
   if (text.startsWith('/')) return;
 
-  const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
-  const isLink = text.startsWith('http') && supportedPlatforms.some(p => text.toLowerCase().includes(p));
+  // Auto-detect links in message
+  try {
+    // Check for Pippit/media URLs first (video/image paste)
+    const { handlePastedUrl } = await import('./handlers/pippit-handler');
+    const handled = await handlePastedUrl(ctx, text);
+    if (handled) return;
 
-  if (isLink) {
-    await ctx.reply('⏳ Processing link... Use /add [link] for proper processing with Phase 2 generation.');
+    // Handle affiliate links
+    await handleLinkWithSelection(ctx, text);
+  } catch (error) {
+    console.error('[TextHandler] Error:', error);
+    // Fallback to simple link check
+    const supportedPlatforms = ['shopee', 'tokopedia', 'lazada', 'tiktok'];
+    const isLink = text.startsWith('http') && supportedPlatforms.some(p => text.toLowerCase().includes(p));
+
+    if (isLink) {
+      await ctx.reply('⏳ Processing link... Use /add [link] for proper processing.');
+    }
+  }
+});
+
+// Pippit URL callback handler
+bot.callbackQuery(/^pippit:(.+)$/, async (ctx) => {
+  const parts = ctx.match[1].split(':');
+  const action = parts[0];
+  const param = parts.slice(1).join(':');
+
+  if (action === 'cancel') {
+    await ctx.answerCallbackQuery('Dibatalkan');
+    await ctx.reply('✅ Postingan dibatalkan.');
+    return;
+  }
+
+  try {
+    const { handlePippitCallback } = await './handlers/pippit-handler';
+    const result = await handlePippitCallback(ctx, action, param);
+    if (result.success) {
+      await ctx.reply('✅ ' + result.message);
+    } else {
+      await ctx.reply('❌ ' + result.message);
+    }
+  } catch (error: any) {
+    console.error('[PippitCallback] Error:', error);
+    await ctx.answerCallbackQuery('❌ Error');
+    await ctx.reply('❌ Error: ' + error.message);
+  }
+});
+
+// Process callback for inline keyboard selections
+bot.callbackQuery(/^process:(.+)$/, async (ctx) => {
+  const parts = ctx.match[1].split(':');
+  const type = parts[0];
+  const link = parts.slice(1).join(':');
+
+  try {
+    await handleProcessCallback(ctx, type, [link]);
+  } catch (error: any) {
+    console.error('[ProcessCallback] Error:', error);
+    await ctx.answerCallbackQuery('❌ Error processing');
+    await ctx.reply('❌ Error: ' + error.message);
   }
 });
 

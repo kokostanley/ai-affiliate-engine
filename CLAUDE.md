@@ -61,6 +61,13 @@ npx tsc              # Compile
 
 # Testing
 npm test             # Run tests
+
+# Pipeline Scripts
+npx tsx scripts/pipeline-summary.ts        # Show pipeline status
+npx tsx scripts/continue-all-pipelines.ts   # Create Zernio drafts
+npx tsx scripts/continue-pipeline.ts        # Continue single pipeline
+npx tsx scripts/check-zernio.ts            # Test Zernio connections
+npx tsx scripts/get-recent-links.ts         # Get recent affiliate links
 ```
 
 ## Development Workflow
@@ -151,6 +158,40 @@ npm run dev:distribution-worker   # Distribution only
 
 Track link status via `/linktrack` command:
 - `PRODUCT_CREATED` → `CONTENT_GENERATED` → `APPROVED` → `DISTRIBUTED` → `POSTED` → `ACTIVE`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**"Not enough credits" Error:**
+- DALL-E: Add credits at platform.openai.com
+- Higgsfield: Check HF_KEY_ID and HF_KEY_SECRET
+
+**Zernio API 401 Unauthorized:**
+- Ensure Zernio keys are configured in .env
+- Keys should match: ZERNIO_CEPAT_KEY_1, ZERNIO_CEPAT_KEY_2, etc.
+
+**No Assets Available:**
+- Use existing Google Drive assets: `npx tsx scripts/continue-pipeline.ts`
+- Or upload manually and update AssetFile.cloudUrl
+
+### Pipeline Scripts
+
+```bash
+# Show current pipeline status
+npx tsx scripts/pipeline-summary.ts
+
+# Continue all pending pipelines (create Zernio drafts)
+npx tsx scripts/continue-all-pipelines.ts
+
+# Continue single pipeline from last affiliate link
+npx tsx scripts/continue-pipeline.ts
+
+# Check Zernio API connections
+npx tsx scripts/check-zernio.ts
+```
 
 ---
 
